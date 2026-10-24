@@ -388,10 +388,11 @@ small {
   height: 16px;
 }
 .kanban-column {
+  --column-padding: 9px;
   flex: 1;
   min-height: 0;
   margin: 0;
-  padding: 9px;
+  padding: var(--column-padding);
   overflow-y: auto;
   border: 1px solid color-mix(in srgb, var(--category-color), #695275 28%);
   border-radius: 17px;
@@ -400,11 +401,52 @@ small {
   scrollbar-width: thin;
   scrollbar-color: #9b7db451 transparent;
 }
+.kanban-column-controls {
+  position: sticky;
+  top: calc(-1 * var(--column-padding));
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: calc(-1 * var(--column-padding)) calc(-1 * var(--column-padding)) 10px;
+  padding: var(--column-padding) var(--column-padding) 10px;
+  border-bottom: 1px solid #ffffff65;
+  border-radius: 16px 16px 0 0;
+  background: color-mix(in srgb, var(--category-color), white 28%);
+}
+.kanban-sort {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 9px;
+  border: 1px solid #ffffff85;
+  border-radius: 9px;
+  background: #ffffff65;
+  color: #6c507d;
+}
+.kanban-sort:focus-within,
+.kanban-sort:hover {
+  background: #ffffffa0;
+}
+.kanban-sort select {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  min-height: 34px;
+  padding: 5px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  appearance: none;
+}
 .kanban-cards {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  min-height: 100%;
+  min-height: 0;
 }
 .supplier-card {
   position: relative;
@@ -582,7 +624,7 @@ small {
   background: #d3c0e9;
   color: #6e4994;
 }
-.kanban-empty-add {
+.kanban-add-supplier {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -596,7 +638,7 @@ small {
   gap: 6px;
   font-size: 12px;
 }
-.kanban-empty-add:hover {
+.kanban-add-supplier:hover {
   background: #ffffff90;
 }
 .budget-builder {
@@ -1488,7 +1530,7 @@ input[type="hidden"] {
     gap: 11px;
   }
   .kanban-column {
-    padding: 7px;
+    --column-padding: 7px;
   }
   .kanban-column-header {
     height: 36px;

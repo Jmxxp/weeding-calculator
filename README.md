@@ -18,6 +18,7 @@ Acesse **http://localhost:5173**.
 ## Usar
 
 1. Use **+** para adicionar categorias e fornecedores. O lápis no título edita a categoria.
+   Em cada coluna, **Adicionar fornecedor** permanece no topo, mesmo com cartões cadastrados. O seletor abaixo ordena apenas aquela categoria por **Mais barato**, **Mais caro**, **Melhores notas** ou **Ordem de cadastro**. Os controles continuam visíveis ao rolar os cartões; a ordenação vale durante a sessão e preserva as escolhas do orçamento.
 2. Clique no cartão para editar nome, preço, telefone, descrição e nota. O marcador no canto marca o favorito.
 3. Segure qualquer parte do cartão e arraste para a faixa de orçamento abaixo do kanban. No celular, um deslize rápido permite rolar; segurar inicia o arraste. Também é possível usar o pequeno **+** no cartão. Cada categoria tem uma escolha por orçamento; outra escolha a substitui.
 4. Cada categoria tem seu espaço colorido em **Meu orçamento**, mesmo quando está vazia. **Falta escolher** mostra as escolhas pendentes: arraste um cartão da mesma categoria ou use a lista do espaço. Se não houver opções, **Adicionar fornecedor** cadastra e preenche o espaço. O **×** remove a escolha e mantém o espaço vazio visível. A lixeira na barra lateral limpa o orçamento em edição, preservando fornecedores e versões salvas.

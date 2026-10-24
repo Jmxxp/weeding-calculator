@@ -70,6 +70,7 @@ export function mountApp(root) {
     draftName: "Meu orçamento",
     editingId: null,
     boardScroll: 0,
+    supplierSorts: {},
   };
   if (state.data.isDemo) {
     const first = ["local", "buffet", "vestido", "musica"];
@@ -778,6 +779,19 @@ export function mountApp(root) {
   }
   function change(event) {
     const t = event.target;
+    if (t.matches?.("[data-supplier-sort]")) {
+      const categoryId = t.dataset.category;
+      if (
+        !state.data.categories.some((category) => category.id === categoryId) ||
+        !["default", "price-asc", "price-desc", "rating-desc"].includes(t.value)
+      )
+        return;
+      state.supplierSorts = { ...state.supplierSorts, [categoryId]: t.value };
+      const column = t.closest(".kanban-column");
+      if (column) column.scrollTop = 0;
+      render();
+      return;
+    }
     if (t.matches?.("[data-budget-choice]")) {
       const supplier = state.data.suppliers.find(
         (item) => item.id === t.value && item.categoryId === t.dataset.category,

@@ -277,6 +277,108 @@ test("click and keyboard edit cards, bookmarks only favorite, plus replaces and 
   assert.equal(query('[data-action="request-save-budget"]').disabled, true);
 });
 
+test("each category keeps its add button above the cards after creating multiple suppliers", () => {
+  const data = fixture();
+  data.suppliers = [];
+  mount(data);
+  for (const [name, price] of [
+    ["Primeiro local", "1200"],
+    ["Segundo local", "1800"],
+  ]) {
+    const column = query('.kanban-column[data-category-id="local"]');
+    const controls = query(".kanban-column-controls", column);
+    assert.equal(column.firstElementChild, controls);
+    assert.equal(controls.nextElementSibling, query(".kanban-cards", column));
+    const button = within(controls).getByRole("button", {
+      name: "Adicionar fornecedor em Local",
+    });
+    fireEvent.click(button);
+    assert.equal(query('[name="categoryId"]').value, "local");
+    type("name", name);
+    type("price", price);
+    formSubmit("supplier");
+  }
+  const column = query('.kanban-column[data-category-id="local"]');
+  assert.equal(column.querySelectorAll(".supplier-card").length, 2);
+  assert.equal(column.querySelectorAll(".kanban-add-supplier").length, 1);
+  assert.ok(query(".kanban-column-controls .kanban-add-supplier", column));
+  const emptyColumn = query('.kanban-column[data-category-id="buffet"]');
+  assert.equal(emptyColumn.querySelectorAll(".supplier-card").length, 0);
+  assert.ok(query(".kanban-add-supplier", emptyColumn));
+  assert.deepEqual(draft().selections, {});
+});
+
+test("category sorting is independent, stable and preserves saved data, budget choices and keyboard focus", () => {
+  const data = fixture();
+  data.suppliers.push(supplier("local-tie", "local", "Outro jardim", 1000, 5));
+  mount(data);
+  include("local-small");
+  saveBudget("Escolha original");
+  const originalData = saved();
+  const originalDraft = draft();
+  const order = (category) =>
+    [
+      ...query(`.kanban-column[data-category-id="${category}"]`).querySelectorAll(
+        ".supplier-card",
+      ),
+    ].map((item) => item.dataset.supplierId);
+  const sort = '[data-supplier-sort][data-category="local"]';
+  query(sort).focus();
+  choose(sort, "price-asc");
+  assert.deepEqual(order("local"), ["local-small", "local-tie", "local-large"]);
+  assert.equal(document.activeElement, query(sort));
+  assert.equal(document.activeElement.id, "supplier-sort-local");
+  assert.deepEqual(order("buffet"), ["buffet-small", "buffet-large"]);
+  choose('[data-supplier-sort][data-category="buffet"]', "price-desc");
+  assert.deepEqual(order("buffet"), ["buffet-large", "buffet-small"]);
+  assert.deepEqual(order("local"), ["local-small", "local-tie", "local-large"]);
+  choose(sort, "price-desc");
+  assert.deepEqual(order("local"), ["local-large", "local-small", "local-tie"]);
+  choose(sort, "rating-desc");
+  assert.deepEqual(order("local"), ["local-large", "local-tie", "local-small"]);
+  choose(sort, "default");
+  assert.deepEqual(order("local"), ["local-small", "local-large", "local-tie"]);
+  assert.deepEqual(order("buffet"), ["buffet-large", "buffet-small"]);
+  assert.deepEqual(saved(), originalData);
+  assert.deepEqual(draft(), originalDraft);
+  assert.match(total(), /1\.000,00/);
+  assert.ok(card("local-small").classList.contains("is-selected"));
+});
+
+test("active sorting repositions edited and new suppliers and survives navigation", () => {
+  mount();
+  const sort = '[data-supplier-sort][data-category="local"]';
+  const order = () =>
+    [
+      ...query('.kanban-column[data-category-id="local"]').querySelectorAll(
+        ".supplier-card",
+      ),
+    ].map((item) => item.dataset.supplierId);
+  choose(sort, "price-asc");
+  fireEvent.click(card("local-small"));
+  type("price", "3000");
+  formSubmit("supplier");
+  assert.deepEqual(order(), ["local-large", "local-small"]);
+  assert.equal(query(sort).value, "price-asc");
+  click('.kanban-add-supplier[data-category="local"]');
+  type("name", "Novo local econômico");
+  type("price", "500");
+  formSubmit("supplier");
+  const created = saved().suppliers.find(
+    (item) => item.name === "Novo local econômico",
+  );
+  assert.ok(created);
+  assert.deepEqual(order(), [created.id, "local-large", "local-small"]);
+  include(created.id);
+  assert.match(total(), /500,00/);
+  assert.equal(query(sort).value, "price-asc");
+  navigate("scenarios");
+  navigate("overview");
+  assert.equal(query(sort).value, "price-asc");
+  assert.deepEqual(order(), [created.id, "local-large", "local-small"]);
+  assert.deepEqual(draft().selections, { local: created.id });
+});
+
 test("native drag uses a preview, drops without accidental edit clicks and preserves scroll and reload draft", (t) => {
   mount();
   fakeTime(t);
@@ -691,7 +793,7 @@ test("creating a supplier from an empty budget slot fills it while board creatio
   assert.ok(created);
   assert.deepEqual(draft().selections, { local: created.id });
   assert.match(total(), /1\.500,00/);
-  click('.kanban-empty-add[data-category="buffet"]');
+  click('.kanban-add-supplier[data-category="buffet"]');
   type("name", "Buffet novo");
   type("price", "2000");
   formSubmit("supplier");
