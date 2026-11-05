@@ -50,13 +50,13 @@ function validConfig(c) {
 }
 
 /** Mounts the application with native DOM events; no framework or compilation required. */
-export function mountApp(root) {
+export function mountApp(root, options = {}) {
   if (!root)
     throw new Error("O elemento principal do aplicativo não foi encontrado.");
   const session = readSession("sim-ai-session", emptyConfig("gemini"));
   const storedProfiles = readSession("sim-ai-profiles", {});
   const state = {
-    data: loadData(),
+    data: options.initialData ?? loadData(),
     view: "overview",
     dialog: null,
     config: validConfig(session) ? session : emptyConfig("gemini"),
@@ -70,6 +70,7 @@ export function mountApp(root) {
     draftName: "Meu orçamento",
     editingId: null,
     boardScroll: 0,
+    syncStatus: { state: "saved", message: "Compartilhado com a família" },
     supplierSorts: {},
   };
   if (state.data.isDemo) {
@@ -190,11 +191,13 @@ export function mountApp(root) {
         <button type="button" class="rail-button ${state.view === "overview" ? "active" : ""}" data-action="view" data-view="overview" title="Montar orçamento" aria-label="Montar orçamento">${navigationIcon("board")}</button>
         <span class="rail-divider"></span><button type="button" class="rail-button rail-clear" data-action="request-clear-budget" title="Limpar orçamento atual" aria-label="Limpar orçamento atual">${navigationIcon("clear")}</button>
       </nav></aside>
-      <main class="workspace-content">
+      <main class="workspace-content ${options.onSave ? "shared-workspace" : ""}">
+        ${options.onSave ? `<div class="family-toolbar"><span data-sync-message role="status"></span><button type="button" class="family-text-button" data-action="retry-sync" hidden>Tentar novamente</button><button type="button" class="family-text-button" data-action="sign-out">Sair</button></div>` : ""}
         ${state.storageError ? '<div class="storage-warning" role="alert">Não foi possível salvar neste navegador. Confira se há espaço disponível antes de fechar.</div>' : ""}
         ${state.view === "overview" ? renderBoard(d, state) : `<section class="secondary-view">${state.view === "scenarios" ? `<div class="secondary-heading"><h1>Orçamentos salvos</h1><button type="button" class="button button-primary" data-action="new-budget">${icon("Plus", 18)} Novo orçamento</button></div>${renderSavedBudgets(d)}` : state.view === "guests" ? '<div id="guests-root"></div>' : '<div id="assistant-root"></div>'}</section>`}
       </main>
     </div>`;
+    updateSyncStatus();
     if (state.view === "assistant") {
       const target = root.querySelector("#assistant-root");
       if (assistantElement) {
@@ -241,6 +244,7 @@ export function mountApp(root) {
     if (!next.scenarios.some((s) => s.id === state.editingId))
       state.editingId = null;
     state.storageError = !saveData(next);
+    options.onSave?.(next);
     persistDraft();
     render();
   }
@@ -257,6 +261,14 @@ export function mountApp(root) {
     } catch {
       state.storageError = true;
     }
+  }
+  function updateSyncStatus() {
+    const label = root.querySelector("[data-sync-message]");
+    if (!label) return;
+    label.textContent = state.syncStatus.message;
+    label.dataset.state = state.syncStatus.state;
+    root.querySelector('[data-action="retry-sync"]').hidden =
+      state.syncStatus.state !== "error";
   }
   function selectSupplier(id, toggle = true) {
     const supplier = state.data.suppliers.find((s) => s.id === id);
@@ -552,6 +564,12 @@ export function mountApp(root) {
       id = button.dataset.id,
       d = state.dialog;
     switch (a) {
+      case "sign-out":
+        options.onSignOut?.();
+        break;
+      case "retry-sync":
+        options.onRetrySync?.();
+        break;
       case "view":
         navigate(button.dataset.view);
         break;
@@ -1308,6 +1326,21 @@ export function mountApp(root) {
   state.storageError = !saveData(state.data);
   render();
   return {
+    replaceData(next) {
+      if (destroyed) return;
+      state.data = next;
+      state.selections = cleanSelections(state.selections, next);
+      if (!next.scenarios.some((s) => s.id === state.editingId))
+        state.editingId = null;
+      state.storageError = !saveData(next);
+      persistDraft();
+      render();
+    },
+    setSyncStatus(status) {
+      if (destroyed) return;
+      state.syncStatus = status;
+      updateSyncStatus();
+    },
     destroy() {
       destroyed = true;
       cleanupDrag();

@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { registerAiRoutes } from "./ai.js";
+import { supabaseConfigModule } from "../scripts/supabase-config.js";
 
 const app = express();
 app.disable("x-powered-by");
@@ -44,6 +45,10 @@ if (production) {
   // Serve only frontend files. Repository files and node_modules are never public.
   app.get("/", (_request, response) => {
     response.sendFile(path.join(root, "index.html"));
+  });
+  app.get("/src/config.js", (_request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    response.type("application/javascript").send(supabaseConfigModule());
   });
   app.use(
     "/src",

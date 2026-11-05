@@ -1,0 +1,7 @@
+// Public project settings. Passwords and administrative keys never belong here.
+export const supabaseConfig = {
+  url: "https://cjvhbftnajepfuwxnobl.supabase.co",
+  publishableKey: "sb_publishable_nloZMqIsyPfq98bcQvj6-Q_UvGKnC_m",
+  email: "familia@weeding-calculator.local",
+  username: "jmxxp",
+};

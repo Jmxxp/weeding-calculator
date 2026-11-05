@@ -9,7 +9,8 @@
     "build:pages": "node scripts/build.js --pages",
     "start": "node server/index.js --production",
     "test": "node --test tests/*.test.js",
-    "check": "node scripts/check.js"
+    "check": "node scripts/check.js",
+    "setup:supabase": "node scripts/setup-supabase.js"
   },
   "dependencies": {
     "express": "^5.1.0"

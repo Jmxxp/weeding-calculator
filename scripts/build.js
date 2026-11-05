@@ -1,6 +1,7 @@
 import { mkdir, cp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { supabaseConfigModule } from "./supabase-config.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const output = path.join(root, "dist");
@@ -23,6 +24,7 @@ await cp(path.join(root, "src"), path.join(output, "src"), {
   recursive: true,
   filter: (source) => !/\.(tsx?|map)$/.test(source),
 });
+await writeFile(path.join(output, "src", "config.js"), supabaseConfigModule());
 await cp(path.join(root, "public"), output, { recursive: true });
 await writeFile(path.join(output, ".nojekyll"), "");
 console.log("Pronto: HTML, CSS e JavaScript nativos copiados para dist/.");

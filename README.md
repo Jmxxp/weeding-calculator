@@ -8,6 +8,26 @@ Um quadro simples para montar e salvar orçamentos de casamento. HTML, CSS e Jav
 
 Requer Node.js 22 ou mais recente.
 
+## Supabase e acesso da família
+
+O aplicativo exige **usuário e senha** antes de abrir o planejamento. O usuário configurado é **jmxxp**. A senha é validada pelo **Supabase Auth**, que guarda seu hash no banco. A tela não pede e-mail; o endereço técnico da conta compartilhada fica apenas na configuração interna. Não há cadastro na interface.
+
+Para conectar, é necessário um projeto Supabase, sua **Project URL** e a chave **publishable** (ou a chave legada `anon`). A senha do Postgres e chaves `secret`/`service_role` nunca entram no navegador.
+
+1. Copie `.env.example` para `.env` e preencha `SUPABASE_URL` e `SUPABASE_PUBLISHABLE_KEY`, disponíveis em **Project Settings → API Keys**.
+2. Apenas na configuração administrativa do Supabase, em **Authentication → Users → Add user**, crie a conta técnica `familia@weeding-calculator.local`, com a senha de acesso escolhida e confirmação automática do e-mail. No app, a família entra com o usuário **jmxxp** e a senha, sem informar esse e-mail.
+3. Execute [supabase/setup.sql](supabase/setup.sql) no SQL Editor do projeto. Ele cria `family_plans` com RLS e autoriza a conta do passo anterior em **App Metadata**. Não use User Metadata para essa permissão. Para um e-mail técnico diferente, ajuste o e-mail no SQL e em `SUPABASE_FAMILY_EMAIL`.
+4. Como alternativa ao passo 2, preencha `SUPABASE_SECRET_KEY` e `FAMILY_ACCESS_PASSWORD` apenas no `.env` local e execute `npm run setup:supabase`. O script cria a conta confirmada e com a permissão necessária; não altera senhas de contas existentes.
+5. Execute `npm run dev` ou gere a publicação com `npm run build:pages`.
+
+Se o projeto for exclusivo deste app, desative novos cadastros em **Authentication → Sign In / Providers**. Mesmo em um projeto compartilhado, contas externas não acessam os dados da família: as regras exigem tanto a identidade correta quanto a permissão em App Metadata.
+
+Os comandos de build incluem somente a URL, a chave pública, o nome de usuário e o e-mail técnico. `SUPABASE_FAMILY_USERNAME` permite alterar o usuário de acesso. O `.env` é ignorado pelo Git; a senha e a chave administrativa não são copiadas para `dist/`. Sem configuração, a entrada permanece fechada. Para testar as permissões no SQL Editor, execute [supabase/tests/family_plans_security.sql](supabase/tests/family_plans_security.sql), que verifica os acessos em uma transação com rollback.
+
+Na primeira entrada, se o banco ainda estiver vazio, o planejamento já salvo no navegador é importado. Um erro de conexão não substitui dados do banco por um planejamento vazio. A sincronização consulta atualizações a cada 10 segundos e ao salvar; alterações independentes são combinadas, e edições simultâneas no mesmo campo usam o último salvamento concluído. Alterações ainda não enviadas são guardadas por projeto e conta e recuperadas após recarregar, quando o armazenamento do navegador está disponível. A barra superior informa alterações pendentes ou falhas e permite tentar novamente. **Sair** salva alterações pendentes antes de encerrar a sessão e limpar os dados privados deste app no navegador.
+
+Referências: [autenticação por senha](https://supabase.com/docs/guides/auth/passwords) e [proteção com RLS](https://supabase.com/docs/guides/database/postgres/row-level-security).
+
 ```sh
 npm install
 npm run dev
@@ -34,9 +54,9 @@ A roda do mouse rola o kanban e a faixa de orçamento na horizontal, sem precisa
 
 ## Dados e IA
 
-O planejamento, os convidados e o orçamento em edição ficam salvos neste navegador. Não há sincronização entre dispositivos.
+O planejamento, os fornecedores, os convidados, os orçamentos salvos e o briefing são compartilhados pelo Supabase. O orçamento em edição e o histórico da IA ficam neste navegador. As chaves dos provedores de IA continuam apenas na sessão de cada aparelho.
 
-Esta versão começa zerada, com as categorias padrão prontas para usar. Na primeira abertura, limpa uma única vez o planejamento, o rascunho e o histórico antigos. Os dados cadastrados depois ficam preservados.
+Quando ainda não existem dados locais ou compartilhados, o planejamento começa com as categorias padrão. A abertura não apaga dados existentes.
 
 Na aba **IA**, primeiro descreva o casamento que busca e informe a cidade ou região. Você pode indicar prioridades e um raio de busca. Depois configure sua chave, busque os modelos disponíveis e escolha um:
 
