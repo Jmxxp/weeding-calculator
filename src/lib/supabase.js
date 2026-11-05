@@ -1,3 +1,5 @@
+import { subscribeFamilyPlanChanges } from "./family-realtime.js";
+
 const DEFAULT_EMAIL = "familia@weeding-calculator.local";
 const DEFAULT_USERNAME = "jmxxp";
 const SESSION_PREFIX = "weeding-supabase-session-v1:";
@@ -58,12 +60,16 @@ export function createSupabaseClient(config, options = {}) {
   let session = null;
   let refreshPromise = null;
   let generation = 0;
+  const sessionEndListeners = new Set();
 
   function clearSession() {
     generation++;
     session = null;
     refreshPromise = null;
     try { storage?.removeItem(storageKey); } catch { /* In-memory sessions still work. */ }
+    for (const listener of [...sessionEndListeners]) {
+      try { listener(); } catch { /* A subscriber must never block logout. */ }
+    }
   }
   function persistSession() {
     try { storage?.setItem(storageKey, JSON.stringify(session)); } catch { /* Storage can be disabled. */ }
@@ -167,6 +173,19 @@ export function createSupabaseClient(config, options = {}) {
     if (!session) throw failure("Sua sessão foi encerrada. Entre novamente.", 401);
     return session;
   }
+  async function getAccessToken() {
+    const currentGeneration = generation;
+    const active = await ensureSession();
+    if (currentGeneration !== generation || !session)
+      throw failure("Sua sessão foi encerrada. Entre novamente.", 401);
+    return active.access_token;
+  }
+  function onSessionEnd(listener) {
+    if (typeof listener !== "function")
+      throw failure("O observador da sessão é inválido.", 400);
+    sessionEndListeners.add(listener);
+    return () => sessionEndListeners.delete(listener);
+  }
   async function authorizedRequest(path, options = {}) {
     const { access_token: token } = await ensureSession();
     try { return await request(path, { ...options, token }); } catch (error) {
@@ -194,6 +213,15 @@ export function createSupabaseClient(config, options = {}) {
 
   return {
     get userId() { return session?.user.id ?? null; },
+    getAccessToken,
+    onSessionEnd,
+    subscribePlanChanges({ onChange, onStatus } = {}) {
+      if (!session) throw failure("Entre com a senha da família para continuar.", 401);
+      return subscribeFamilyPlanChanges({
+        url, publishableKey, userId: session.user.id, getAccessToken, onSessionEnd,
+        onChange, onStatus,
+      }, { loadRealtime: options.loadRealtime });
+    },
     async signIn(password, username = configuredUsername) {
       clearSession();
       if (typeof username !== "string" || username.trim().toLowerCase() !== configuredUsername)

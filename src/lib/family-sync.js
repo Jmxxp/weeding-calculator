@@ -65,7 +65,7 @@ export function createFamilySync({
   onData = () => {},
   onStatus = () => {},
   delay = 400,
-  pollInterval = 10000,
+  pollInterval = 60000,
   storage = null,
   storageKey = null,
 }) {
@@ -78,6 +78,9 @@ export function createFamilySync({
   let requested = false;
   let generation = 0;
   let journalFailed = false;
+  let notificationRevision = 0;
+  let refreshRequested = false;
+  let unsubscribeRealtime = null;
   const journalEnabled = storage && typeof storageKey === "string" && storageKey;
 
   const pending = () => !same(baseline, desired);
@@ -131,9 +134,14 @@ export function createFamilySync({
   }
 
   async function synchronize() {
+    if (destroyed) return false;
     let success = true;
     do {
       requested = false;
+      // This read covers notifications received before it began. Notifications
+      // arriving during the request can ask for another pass after its result.
+      notificationRevision = 0;
+      refreshRequested = false;
       const before = copy(baseline);
       const snapshot = copy(desired);
       const snapshotGeneration = generation;
@@ -167,6 +175,7 @@ export function createFamilySync({
         if (!pending()) status("saved", "Salvo para a família");
         // Drain newer edits even when they arrived during a read-only poll.
         if (generation !== snapshotGeneration && pending()) requested = true;
+        if (refreshRequested || notificationRevision > revision) requested = true;
       } catch (error) {
         if (destroyed) return false;
         success = false;
@@ -181,6 +190,8 @@ export function createFamilySync({
         // Keep both the acknowledged baseline and the pending edits intact.
         // A later poll, retry, or explicit flush will attempt them again.
         requested = false;
+        refreshRequested = false;
+        notificationRevision = 0;
       }
     } while (requested && !destroyed);
     return success && !destroyed && !pending();
@@ -192,11 +203,40 @@ export function createFamilySync({
     debounceTimer = undefined;
     requested = true;
     if (!operation) {
-      operation = synchronize().finally(() => {
-        operation = null;
-      });
+      operation = Promise.resolve()
+        .then(synchronize)
+        .finally(() => {
+          operation = null;
+          // SDK callbacks can arrive as microtasks after the last read resolved.
+          if (!destroyed && (refreshRequested || notificationRevision > revision))
+            void flush();
+        });
     }
     return operation;
+  }
+
+  function changed(event) {
+    if (destroyed) return;
+    const nextRevision = Number(event?.revision);
+    if (Number.isSafeInteger(nextRevision) && nextRevision > 0) {
+      if (nextRevision <= revision) return;
+      notificationRevision = Math.max(notificationRevision, nextRevision);
+    } else refreshRequested = true;
+    if (!operation) void flush();
+  }
+
+  function connectionStatus(connection) {
+    if (destroyed) return;
+    if (connection === "SUBSCRIBED") {
+      // Catch up after both the first subscription and every reconnection.
+      refreshRequested = true;
+      if (!operation) void flush();
+    } else if (["CHANNEL_ERROR", "TIMED_OUT", "CLOSED"].includes(connection)) {
+      status(
+        "error",
+        "A atualização imediata foi interrompida. Continuaremos tentando sincronizar.",
+      );
+    }
   }
 
   const pollTimer =
@@ -208,6 +248,17 @@ export function createFamilySync({
 
   if (pending())
     debounceTimer = setTimeout(() => void flush(), Math.max(0, delay));
+
+  if (typeof client.subscribePlanChanges === "function") {
+    try {
+      unsubscribeRealtime = client.subscribePlanChanges({
+        onChange: changed,
+        onStatus: connectionStatus,
+      });
+    } catch {
+      connectionStatus("CHANNEL_ERROR");
+    }
+  }
 
   return {
     save(data) {
@@ -232,6 +283,14 @@ export function createFamilySync({
       destroyed = true;
       clearTimeout(debounceTimer);
       clearInterval(pollTimer);
+      if (typeof unsubscribeRealtime === "function") {
+        try {
+          unsubscribeRealtime();
+        } catch {
+          // Cleanup must still complete if the underlying channel is closed.
+        }
+        unsubscribeRealtime = null;
+      }
     },
     get pending() {
       return pending();
