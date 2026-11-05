@@ -8,7 +8,7 @@ function deferred() {
   const promise = new Promise((done, fail) => { resolve = done; reject = fail; });
   return { promise, resolve, reject };
 }
-function fixture(overrides = {}) {
+function fixture(overrides = {}, { autoSystemReady = true } = {}) {
   const state = {
     sockets: [], statuses: [], changes: [], listeners: new Set(),
     token: "initial-token", loads: 0,
@@ -27,14 +27,18 @@ function fixture(overrides = {}) {
       this.topic = topic;
       const channel = {
         on: (event, filter, callback) => {
-          this.event = event;
-          this.filter = filter;
-          this.onChange = callback;
+          if (event === "postgres_changes") {
+            this.event = event;
+            this.filter = filter;
+            this.onChange = callback;
+          } else if (event === "system") this.onSystem = callback;
           return channel;
         },
         subscribe: (callback) => {
           this.onStatus = callback;
           callback("SUBSCRIBED");
+          if (autoSystemReady)
+            this.onSystem?.({ extension: "postgres_changes", status: "ok", message: "Subscribed to PostgreSQL" });
           return channel;
         },
       };
@@ -88,7 +92,57 @@ test("events forward only revisions and SDK token callbacks obtain the newest to
   assert.equal(await socket.options.accessToken(), "refreshed-token");
   socket.onStatus("TIMED_OUT");
   socket.onStatus("SUBSCRIBED");
+  assert.deepEqual(state.statuses, ["SUBSCRIBED", "TIMED_OUT"]);
+  socket.onSystem({ extension: "postgres_changes", status: "ok", message: "Subscribed to PostgreSQL" });
   assert.deepEqual(state.statuses, ["SUBSCRIBED", "TIMED_OUT", "SUBSCRIBED"]);
+  unsubscribe();
+});
+
+test("joining the WebSocket channel never reports PostgreSQL replication readiness by itself", async () => {
+  const { state, settings, options } = fixture({}, { autoSystemReady: false });
+  const unsubscribe = subscribeFamilyPlanChanges(settings, options);
+  await tick();
+  const socket = state.sockets[0];
+  assert.deepEqual(state.statuses, []);
+  socket.onSystem({ extension: "system", status: "ok", message: "Replication connection established" });
+  socket.onSystem({ extension: "postgres_changes", status: "connecting" });
+  assert.deepEqual(state.statuses, []);
+  socket.onSystem({ extension: "postgres_changes", status: "ok", message: "Subscribed to PostgreSQL" });
+  assert.deepEqual(state.statuses, ["SUBSCRIBED"]);
+  unsubscribe();
+});
+
+test("missing publication reports a PostgreSQL error while keeping the channel open for recovery and catch-up", async () => {
+  const errors = [];
+  const { state, settings, options } = fixture({
+    onStatus(status, error) { state.statuses.push(status); if (error) errors.push(error); },
+  }, { autoSystemReady: false });
+  const unsubscribe = subscribeFamilyPlanChanges(settings, options);
+  await tick();
+  const socket = state.sockets[0];
+  socket.onSystem({ extension: "postgres_changes", status: "error", message: "Table not found in publication" });
+  assert.deepEqual(state.statuses, ["CHANNEL_ERROR"]);
+  assert.match(errors[0].message, /publication/);
+  assert.equal(socket.disconnected, 0);
+  assert.equal(socket.removals.length, 0);
+  assert.equal(state.listeners.size, 1);
+  socket.onStatus("SUBSCRIBED");
+  assert.deepEqual(state.statuses, ["CHANNEL_ERROR"], "a later channel join cannot mask the database error");
+  socket.onSystem({ extension: "postgres_changes", status: "ok", message: "Subscribed to PostgreSQL" });
+  assert.deepEqual(state.statuses, ["CHANNEL_ERROR", "SUBSCRIBED"], "actual readiness triggers the caller's catch-up read");
+  socket.onChange({ new: { revision: 9 } });
+  assert.deepEqual(state.changes, [{ revision: 9 }]);
+  assert.equal(state.sockets.length, 1);
+  unsubscribe();
+});
+
+test("a real filtered database event proves readiness even if its system notification was missed", async () => {
+  const { state, settings, options } = fixture({}, { autoSystemReady: false });
+  const unsubscribe = subscribeFamilyPlanChanges(settings, options);
+  await tick();
+  state.sockets[0].onChange({ new: { revision: 3 } });
+  assert.deepEqual(state.statuses, ["SUBSCRIBED"]);
+  assert.deepEqual(state.changes, [{ revision: 3 }]);
   unsubscribe();
 });
 

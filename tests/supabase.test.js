@@ -291,8 +291,14 @@ test("subscribePlanChanges refuses signed-out access and uses the injected offic
         async setAuth(token) { this.token = token; }
         channel() {
           this.subscription = {
-            on: (_type, filter, callback) => { this.filter = filter; this.change = callback; },
-            subscribe: (callback) => { callback("SUBSCRIBED"); },
+            on: (type, filter, callback) => {
+              if (type === "postgres_changes") { this.filter = filter; this.change = callback; }
+              if (type === "system") this.system = callback;
+            },
+            subscribe: (callback) => {
+              callback("SUBSCRIBED");
+              this.system({ extension: "postgres_changes", status: "ok", message: "Subscribed to PostgreSQL" });
+            },
           };
           return this.subscription;
         }

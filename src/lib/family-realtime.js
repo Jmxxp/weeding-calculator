@@ -17,6 +17,7 @@ export function subscribeFamilyPlanChanges({
   let lastToken = null;
   let retryTimer;
   let retryAttempt = 0;
+  let postgresReady = false;
   const authFailure = (error) => [400, 401, 403, 422].includes(error?.status);
 
   function status(state, error) {
@@ -29,6 +30,7 @@ export function subscribeFamilyPlanChanges({
     const currentChannel = channel;
     socket = null;
     channel = null;
+    postgresReady = false;
     if (!currentSocket) return;
     if (currentChannel) {
       try {
@@ -119,11 +121,34 @@ export function subscribeFamilyPlanChanges({
       filter: `user_id=eq.${userId}`,
     }, (payload) => {
       if (stopped) return;
+      // A received database event also proves that the filtered stream is live.
+      if (!postgresReady) {
+        postgresReady = true;
+        status("SUBSCRIBED");
+      }
       try {
         Promise.resolve(onChange({ revision: payload?.new?.revision })).catch(fail);
       } catch (error) { fail(error); }
     });
-    channel.subscribe((state, error) => status(state, error));
+    channel.on("system", {}, (payload) => {
+      if (stopped || payload?.extension !== "postgres_changes") return;
+      if (payload.status === "ok") {
+        if (!postgresReady) {
+          postgresReady = true;
+          status("SUBSCRIBED");
+        }
+      } else if (payload.status === "error") {
+        postgresReady = false;
+        // Postgres publication/replication failures can recover on this channel.
+        // Leave it open so the server and SDK can retry after activation.
+        status("CHANNEL_ERROR", new Error(payload.message || "A conexão com as alterações do banco ainda não está disponível."));
+      }
+    });
+    channel.subscribe((state, error) => {
+      if (state === "SUBSCRIBED") return; // A WebSocket join alone does not prove replication readiness.
+      postgresReady = false;
+      status(state, error);
+    });
   }
 
   try {
