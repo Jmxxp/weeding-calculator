@@ -5,6 +5,14 @@ import {
   tavilySearch,
 } from "./ai-search.js";
 
+/**
+ * Official REST contracts shared by the local API and static BYOK transport:
+ * https://ai.google.dev/api/models
+ * https://ai.google.dev/api/generate-content
+ * https://api-docs.deepseek.com/api/list-models
+ * https://api-docs.deepseek.com/api/create-chat-completion
+ * See ai-search.js for the grounding and search-tool contracts.
+ */
 const GEMINI_ORIGIN = "https://generativelanguage.googleapis.com";
 const DEEPSEEK_ORIGIN = "https://api.deepseek.com";
 const MAX_CONTEXT_CHARS = 180_000;

@@ -53,6 +53,12 @@ function budgetBuilder(data, state) {
 /** Native HTML templates follow the supplied board sketch; interaction stays in app.js. */
 export function renderBoard(data, state = {}) {
   const selections = state.selections || {};
+  const sortOptions = [
+    ["default", "Ordem de cadastro"],
+    ["price-asc", "Mais barato"],
+    ["price-desc", "Mais caro"],
+    ["rating-desc", "Melhores notas"],
+  ];
   const hint = data.suppliers.length
     ? "Toque para editar. Segure o cartão e arraste para o orçamento."
     : "Comece pelo +: cadastre um fornecedor e informe o valor.";
@@ -62,8 +68,12 @@ export function renderBoard(data, state = {}) {
         const options = data.suppliers.filter(
           (supplier) => supplier.categoryId === category.id,
         );
+        const sort = state.supplierSorts?.[category.id] || "default";
+        if (sort === "price-asc") options.sort((a, b) => a.price - b.price);
+        if (sort === "price-desc") options.sort((a, b) => b.price - a.price);
+        if (sort === "rating-desc") options.sort((a, b) => b.rating - a.rating);
         return `<div class="category-track" style="${colors(index)}"><header class="kanban-column-header"><h2 class="kanban-column-title">${e(category.name.toLocaleUpperCase("pt-BR"))}</h2><button type="button" class="category-edit-button" data-action="edit-category" data-id="${e(category.id)}" aria-label="${e(`Editar categoria ${category.name}`)}">${icon("Pencil", 17)}</button></header>
-        <section class="kanban-column" data-category-id="${e(category.id)}" aria-label="${e(category.name)}"><div class="kanban-cards">${options.map((supplier) => supplierCard(supplier, selections[category.id] === supplier.id)).join("")}${!options.length ? `<button type="button" class="kanban-empty-add" data-action="add-supplier" data-category="${e(category.id)}" aria-label="${e(`Adicionar fornecedor em ${category.name}`)}">${icon("Plus", 18)} Adicionar opção</button>` : ""}</div></section></div>`;
+        <section class="kanban-column" data-category-id="${e(category.id)}" aria-label="${e(category.name)}"><div class="kanban-column-controls"><button type="button" class="kanban-add-supplier" data-action="add-supplier" data-category="${e(category.id)}" aria-label="${e(`Adicionar fornecedor em ${category.name}`)}">${icon("Plus", 18)} Adicionar fornecedor</button><label class="kanban-sort" for="supplier-sort-${e(category.id)}">${icon("SlidersHorizontal", 14)}<select id="supplier-sort-${e(category.id)}" data-supplier-sort data-category="${e(category.id)}" aria-label="${e(`Ordenar fornecedores de ${category.name}`)}">${sortOptions.map(([value, label]) => `<option value="${value}" ${sort === value ? "selected" : ""}>${label}</option>`).join("")}</select>${icon("ChevronDown", 12)}</label></div><div class="kanban-cards">${options.map((supplier) => supplierCard(supplier, selections[category.id] === supplier.id)).join("")}</div></section></div>`;
       })
       .join("")}</div></div></section>${budgetBuilder(data, state)}</div>`;
 }

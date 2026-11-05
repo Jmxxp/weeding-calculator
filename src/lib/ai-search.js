@@ -4,7 +4,7 @@
  * https://api-docs.deepseek.com/guides/tool_calls/
  * https://docs.tavily.com/documentation/api-reference/endpoint/search
  * https://support.google.com/websearch/answer/2466433
- * Search result URLs are displayed as evidence, never fetched by this server.
+ * Search result URLs are displayed as evidence, never fetched by the application.
  */
 const object = (value) =>
   value !== null && typeof value === "object" && !Array.isArray(value);

@@ -1,0 +1,83 @@
+.family-access {
+  display: grid;
+  place-items: center;
+  height: 100vh;
+  height: 100dvh;
+  overflow-y: auto;
+  padding: 24px;
+  background: radial-gradient(ellipse at 20% 10%, #e5d2fc, transparent 55%), #f5f0fb;
+}
+.family-access-card {
+  width: min(100%, 430px);
+  padding: 38px;
+  border: 1px solid #e3d6f0;
+  border-radius: 26px;
+  background: #ffffffed;
+  box-shadow: 0 20px 70px #63438613;
+}
+.family-access-symbol {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  margin-bottom: 24px;
+  border-radius: 20px;
+  background: #eee2fc;
+  color: #7950bd;
+}
+.family-eyebrow {
+  color: #7950bd;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+}
+.family-access-card h1 { margin-bottom: 12px; }
+.family-access-card > p:not(.family-eyebrow) { color: #776582; line-height: 1.7; }
+.family-access-card form { display: grid; margin-top: 28px; }
+.family-access-card label { margin-bottom: 8px; font-weight: 600; }
+.family-access-card label[for="family-password"] { margin-top: 16px; }
+.family-access-card input {
+  width: 100%;
+  min-height: 50px;
+  padding: 12px 14px;
+  border: 1px solid #d8cae7;
+  border-radius: 12px;
+  background: #fdfaff;
+  font-size: 18px;
+}
+.family-access-card .button { min-height: 48px; border-radius: 12px; }
+.family-access-card > .button { width: 100%; }
+.family-access-card > .family-text-button { display: block; margin: 12px auto 0; }
+.family-access-card small { display: block; margin-top: 24px; color: #84738e; text-align: center; }
+.family-error { min-height: 20px; margin: 9px 0; color: #a03255 !important; font-size: 13px; }
+.shared-workspace { display: flex; flex-direction: column; }
+.shared-workspace > .board-layout,
+.shared-workspace > .secondary-view { flex: 1; height: auto; min-height: 0; }
+.family-toolbar {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 12px;
+  min-height: 40px;
+  padding: 6px 22px;
+  border-bottom: 1px solid #e5dbee;
+  background: #ffffff80;
+  color: #776582;
+  font-size: 12px;
+}
+.family-toolbar [data-sync-message] { flex: 1; }
+.family-toolbar [data-state="error"] { color: #a03255; }
+.family-text-button {
+  flex-shrink: 0;
+  padding: 6px 4px;
+  border: 0;
+  background: transparent;
+  color: #7950bd;
+  font-weight: 600;
+}
+.family-text-button[hidden] { display: none; }
+@media (max-width: 600px) {
+  .family-access { padding: 18px; }
+  .family-access-card { padding: 28px; }
+  .family-toolbar { padding: 6px 12px; gap: 8px; font-size: 11px; }
+}
