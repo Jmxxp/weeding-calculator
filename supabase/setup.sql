@@ -69,4 +69,30 @@ create policy family_plans_update on public.family_plans
 comment on table public.family_plans is
   'Planejamento compartilhado pelos aparelhos da conta familiar autorizada.';
 
+-- Inclua a tabela na publicação usada pelo Supabase Realtime.
+-- O mesmo bloco está em realtime.sql para instalações já existentes.
+do $$
+begin
+  if to_regclass('public.family_plans') is null then
+    raise exception 'Crie primeiro a tabela family_plans executando supabase/setup.sql.';
+  end if;
+
+  if not exists (
+    select 1 from pg_publication where pubname = 'supabase_realtime'
+  ) then
+    create publication supabase_realtime;
+  end if;
+
+  if not exists (
+    select 1 from pg_publication
+    where pubname = 'supabase_realtime' and puballtables
+  ) and not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public' and tablename = 'family_plans'
+  ) then
+    alter publication supabase_realtime add table public.family_plans;
+  end if;
+end $$;
+
 commit;

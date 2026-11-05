@@ -2,12 +2,14 @@ import { mkdir, cp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { supabaseConfigModule } from "./supabase-config.js";
+import { buildRealtimeVendor } from "./build-vendor.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const output = path.join(root, "dist");
 const transport = process.argv.includes("--pages") ? "browser" : "server";
 if (path.relative(root, output) !== "dist")
   throw new Error("Diretório de saída inválido.");
+await buildRealtimeVendor();
 await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
 const sourceHtml = await readFile(path.join(root, "index.html"), "utf8");

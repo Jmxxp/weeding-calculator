@@ -15,12 +15,14 @@ const deferred = () => {
 };
 function database(data = createEmptyData()) {
   let row = { data: clone(data), revision: 1 };
+  let reads = 0;
   const writes = [];
   return {
     writes,
+    get reads() { return reads; },
     get row() { return clone(row); },
     replace(data) { row = { data: clone(data), revision: row.revision + 1 }; },
-    async readPlan() { return clone(row); },
+    async readPlan() { reads++; return clone(row); },
     async updatePlan(data, revision) {
       writes.push({ data: clone(data), revision });
       if (revision !== row.revision) return null;
@@ -246,9 +248,11 @@ test("failed reads never save an empty replacement", async () => {
 test("destroy ignores an in-flight response and cancels all future work", async () => {
   const db = database();
   const read = deferred();
-  db.readPlan = () => read.promise;
+  const started = deferred();
+  db.readPlan = () => { started.resolve(); return read.promise; };
   const device = mount(db);
   const flushing = device.sync.flush();
+  await started.promise;
   device.sync.destroy();
   const changed = db.row;
   changed.data.wedding.budget = 99000;
@@ -366,4 +370,191 @@ test("journal failure still permits a network save and reports memory-only pendi
   assert.equal(await device.sync.retry(), true);
   assert.equal(db.row.data.wedding.budget, 32000);
   assert.equal(device.sync.pending, false);
+});
+
+function realtimeDatabase(data) {
+  const db = database(data);
+  const listeners = new Set();
+  let unsubscribed = 0;
+  let lastListener;
+  Object.assign(db, {
+    subscribePlanChanges(listener) {
+      listeners.add(listener);
+      lastListener = listener;
+      return () => { listeners.delete(listener); unsubscribed++; };
+    },
+    emitChange(event = { revision: db.row.revision }) {
+      for (const listener of listeners) listener.onChange(event);
+    },
+    emitStatus(status) {
+      for (const listener of listeners) listener.onStatus(status);
+    },
+  });
+  Object.defineProperties(db, {
+    lastListener: { get: () => lastListener },
+    unsubscribed: { get: () => unsubscribed },
+  });
+  return db;
+}
+
+test("a family change event refreshes immediately with polling disabled", async () => {
+  const db = realtimeDatabase();
+  const received = deferred();
+  const device = mount(db, {
+    onData(data) {
+      assert.equal(data.wedding.budget, 27000);
+      received.resolve();
+    },
+  });
+  const updated = db.row.data;
+  updated.wedding.budget = 27000;
+  db.replace(updated);
+  db.emitChange();
+  await received.promise;
+  assert.equal(device.sync.data.wedding.budget, 27000);
+  assert.equal(device.sync.pending, false);
+  assert.equal(db.reads, 1);
+  assert.equal(db.writes.length, 0);
+});
+
+test("own revision events before and after acknowledgement do not create refresh loops", async () => {
+  const db = realtimeDatabase();
+  const write = db.updatePlan.bind(db);
+  db.updatePlan = async (data, revision) => {
+    const saved = await write(data, revision);
+    db.emitChange({ revision: saved.revision });
+    return saved;
+  };
+  const device = mount(db);
+  device.edit((data) => { data.wedding.budget = 24000; });
+  assert.equal(await device.sync.flush(), true);
+  assert.equal(db.reads, 1, "the write acknowledgement satisfies its own notification");
+  db.emitChange({ revision: device.sync.revision });
+  db.emitChange({ revision: device.sync.revision - 1 });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(db.reads, 1, "already applied revisions need no additional read");
+  assert.equal(db.writes.length, 1);
+});
+
+test("subscription and reconnection catch missed changes and preserve pending local edits", async () => {
+  const db = realtimeDatabase();
+  const caughtUp = deferred();
+  let completed = 0;
+  const device = mount(db, {
+    onStatus(status) {
+      if (status.state === "saved") {
+        completed++;
+        if (completed === 2) caughtUp.resolve();
+      }
+    },
+  });
+  db.emitStatus("SUBSCRIBED");
+  await device.sync.flush();
+  assert.equal(completed, 1);
+  db.emitStatus("CHANNEL_ERROR");
+  device.edit((data) => { data.wedding.budget = 41000; });
+  const newer = db.row.data;
+  newer.wedding.guests = 140;
+  db.replace(newer);
+  db.emitStatus("SUBSCRIBED");
+  await caughtUp.promise;
+  assert.equal(device.sync.pending, false);
+  assert.equal(db.row.data.wedding.budget, 41000);
+  assert.equal(db.row.data.wedding.guests, 140);
+  assert.equal(db.writes.length, 1);
+});
+
+test("an external event during an in-flight read is drained after its stale response", async () => {
+  const db = realtimeDatabase();
+  const read = db.readPlan.bind(db);
+  const started = deferred();
+  const release = deferred();
+  let first = true;
+  db.readPlan = async () => {
+    const snapshot = await read();
+    if (first) {
+      first = false;
+      started.resolve();
+      await release.promise;
+    }
+    return snapshot;
+  };
+  const device = mount(db);
+  const refreshing = device.sync.flush();
+  await started.promise;
+  const updated = db.row.data;
+  updated.wedding.guests = 65;
+  db.replace(updated);
+  db.emitChange();
+  release.resolve();
+  assert.equal(await refreshing, true);
+  assert.equal(device.sync.data.wedding.guests, 65);
+  assert.equal(db.reads, 2);
+  assert.equal(db.writes.length, 0);
+});
+
+test("destroy unsubscribes once and ignores delayed channel callbacks", async () => {
+  const db = realtimeDatabase();
+  const device = mount(db);
+  const listener = db.lastListener;
+  device.sync.destroy();
+  device.sync.destroy();
+  assert.equal(db.unsubscribed, 1);
+  listener.onChange({ revision: 20 });
+  listener.onStatus("SUBSCRIBED");
+  listener.onStatus("CLOSED");
+  await Promise.resolve();
+  assert.equal(db.reads, 0);
+  assert.equal(device.statuses.length, 0);
+});
+
+test("fallback polling continues while the realtime channel is unavailable", async () => {
+  const db = realtimeDatabase();
+  const received = deferred();
+  const device = mount(db, {
+    pollInterval: 5,
+    onData(data) {
+      assert.equal(data.wedding.budget, 33000);
+      received.resolve();
+    },
+  });
+  db.emitStatus("TIMED_OUT");
+  assert.equal(device.statuses.at(-1).state, "error");
+  assert.match(device.statuses.at(-1).message, /atualização imediata/);
+  const updated = db.row.data;
+  updated.wedding.budget = 33000;
+  db.replace(updated);
+  await received.promise;
+  device.sync.destroy();
+  assert.equal(device.sync.data.wedding.budget, 33000);
+  assert.equal(db.writes.length, 0);
+});
+
+test("a realtime callback queued as the previous operation completes still refreshes", async () => {
+  const db = realtimeDatabase();
+  const received = deferred();
+  let notify = true;
+  const device = mount(db, {
+    onStatus(status) {
+      if (status.state === "saved" && notify) {
+        notify = false;
+        queueMicrotask(() => {
+          const newer = db.row.data;
+          newer.wedding.guests = 135;
+          db.replace(newer);
+          db.emitChange();
+        });
+      }
+    },
+    onData(data) {
+      assert.equal(data.wedding.guests, 135);
+      received.resolve();
+    },
+  });
+  await device.sync.flush();
+  await received.promise;
+  assert.equal(device.sync.data.wedding.guests, 135);
+  assert.equal(db.reads, 2);
+  assert.equal(db.writes.length, 0);
 });

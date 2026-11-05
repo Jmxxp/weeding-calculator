@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "node scripts/build-vendor.js",
     "dev": "node --watch server/index.js",
     "build": "node scripts/build.js",
     "build:pages": "node scripts/build.js --pages",
@@ -13,10 +14,12 @@
     "setup:supabase": "node scripts/setup-supabase.js"
   },
   "dependencies": {
+    "@supabase/realtime-js": "2.119.0",
     "express": "^5.1.0"
   },
   "devDependencies": {
     "@testing-library/dom": "^10.4.2",
+    "esbuild": "0.28.2",
     "jsdom": "^30.1.3"
   }
 }

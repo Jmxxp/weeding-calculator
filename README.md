@@ -18,15 +18,16 @@ Para conectar, é necessário um projeto Supabase, sua **Project URL** e a chave
 2. Apenas na configuração administrativa do Supabase, em **Authentication → Users → Add user**, crie a conta técnica `familia@weeding-calculator.local`, com a senha de acesso escolhida e confirmação automática do e-mail. No app, a família entra com o usuário **jmxxp** e a senha, sem informar esse e-mail.
 3. Execute [supabase/setup.sql](supabase/setup.sql) no SQL Editor do projeto. Ele cria `family_plans` com RLS e autoriza a conta do passo anterior em **App Metadata**. Não use User Metadata para essa permissão. Para um e-mail técnico diferente, ajuste o e-mail no SQL e em `SUPABASE_FAMILY_EMAIL`.
 4. Como alternativa ao passo 2, preencha `SUPABASE_SECRET_KEY` e `FAMILY_ACCESS_PASSWORD` apenas no `.env` local e execute `npm run setup:supabase`. O script cria a conta confirmada e com a permissão necessária; não altera senhas de contas existentes.
-5. Execute `npm run dev` ou gere a publicação com `npm run build:pages`.
+5. Para uma instalação anterior, execute também [supabase/realtime.sql](supabase/realtime.sql) no SQL Editor. O `setup.sql` já inclui essa configuração em novas instalações.
+6. Execute `npm run dev` ou gere a publicação com `npm run build:pages`.
 
 Se o projeto for exclusivo deste app, desative novos cadastros em **Authentication → Sign In / Providers**. Mesmo em um projeto compartilhado, contas externas não acessam os dados da família: as regras exigem tanto a identidade correta quanto a permissão em App Metadata.
 
 Os comandos de build incluem somente a URL, a chave pública, o nome de usuário e o e-mail técnico. `SUPABASE_FAMILY_USERNAME` permite alterar o usuário de acesso. O `.env` é ignorado pelo Git; a senha e a chave administrativa não são copiadas para `dist/`. Sem configuração, a entrada permanece fechada. Para testar as permissões no SQL Editor, execute [supabase/tests/family_plans_security.sql](supabase/tests/family_plans_security.sql), que verifica os acessos em uma transação com rollback.
 
-Na primeira entrada, se o banco ainda estiver vazio, o planejamento já salvo no navegador é importado. Um erro de conexão não substitui dados do banco por um planejamento vazio. A sincronização consulta atualizações a cada 10 segundos e ao salvar; alterações independentes são combinadas, e edições simultâneas no mesmo campo usam o último salvamento concluído. Alterações ainda não enviadas são guardadas por projeto e conta e recuperadas após recarregar, quando o armazenamento do navegador está disponível. A barra superior informa alterações pendentes ou falhas e permite tentar novamente. **Sair** salva alterações pendentes antes de encerrar a sessão e limpar os dados privados deste app no navegador.
+Na primeira entrada, se o banco ainda estiver vazio, o planejamento já salvo no navegador é importado. Um erro de conexão não substitui dados do banco por um planejamento vazio. O **Supabase Realtime** avisa os outros aparelhos assim que um planejamento é salvo, sem recarregar a página. A conexão usa a sessão autenticada e um filtro por conta; as regras RLS continuam protegendo os dados. Ao reconectar, o app busca alterações perdidas, e uma verificação a cada 60 segundos ajuda na recuperação de falhas de conexão. Alterações independentes são combinadas, e edições simultâneas no mesmo campo usam o último salvamento concluído. Alterações ainda não enviadas são guardadas por projeto e conta e recuperadas após recarregar, quando o armazenamento do navegador está disponível. A barra superior informa alterações pendentes ou falhas e permite tentar novamente. **Sair** salva alterações pendentes antes de encerrar a sessão e limpar os dados privados deste app no navegador.
 
-Referências: [autenticação por senha](https://supabase.com/docs/guides/auth/passwords) e [proteção com RLS](https://supabase.com/docs/guides/database/postgres/row-level-security).
+Referências: [autenticação por senha](https://supabase.com/docs/guides/auth/passwords), [proteção com RLS](https://supabase.com/docs/guides/database/postgres/row-level-security) e [Realtime Postgres Changes](https://supabase.com/docs/guides/realtime/postgres-changes).
 
 ```sh
 npm install
@@ -86,7 +87,7 @@ npm run build
 npm start
 ```
 
-O build copia HTML, CSS e JavaScript para `dist/`. O servidor escuta em `127.0.0.1:5173`.
+O build copia HTML, CSS e JavaScript para `dist/` e inclui o cliente oficial de Realtime, compilado localmente com esbuild. O comando `npm run dev` também prepara esse cliente. O servidor escuta em `127.0.0.1:5173`.
 
 Para gerar a versão estática do GitHub Pages:
 

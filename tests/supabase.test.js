@@ -25,6 +25,7 @@ function setup(responses, options = {}) {
   const requests = [];
   const storage = options.storage ?? memoryStorage();
   const client = createSupabaseClient(config, {
+    ...options,
     storage,
     fetchImpl: async (url, init) => {
       requests.push({ url: new URL(url), ...init, parsedBody: init.body ? JSON.parse(init.body) : undefined });
@@ -244,6 +245,83 @@ test("a revoked access token refreshes once before retrying the data request", a
   assert.deepEqual(await client.readPlan(), { data: plan, revision: 3 });
   assert.equal(requests.length, 4);
   assert.equal(requests[3].headers.Authorization, "Bearer renewed");
+});
+
+test("Realtime token access shares REST refresh and never exposes refresh tokens", async () => {
+  const { client, requests } = setup([
+    json(auth({ expires_in: 1 })),
+    json(auth({ access_token: "rotated-access", refresh_token: "rotated-refresh" })),
+  ]);
+  await assert.rejects(client.getAccessToken(), { status: 401 });
+  await client.signIn(TEST_PASSWORD);
+  assert.equal(await client.getAccessToken(), "rotated-access");
+  assert.equal(await client.getAccessToken(), "rotated-access");
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].url.searchParams.get("grant_type"), "refresh_token");
+});
+
+test("session-end observers run on logout and revoked refresh, with removable subscriptions", async () => {
+  const { client } = setup([
+    json(auth({ expires_in: 1 })), json({}, 400),
+    json(auth()), new Response(null, { status: 204 }),
+  ]);
+  await client.signIn(TEST_PASSWORD);
+  let ended = 0;
+  const detach = client.onSessionEnd(() => { ended++; });
+  const detachBroken = client.onSessionEnd(() => { throw new Error("observer"); });
+  await assert.rejects(client.getAccessToken(), { status: 400 });
+  assert.equal(ended, 1);
+  detach();
+  detachBroken();
+  await client.signIn(TEST_PASSWORD);
+  const detachLogout = client.onSessionEnd(() => { ended++; });
+  await client.signOut();
+  assert.equal(ended, 2);
+  detachLogout();
+});
+
+test("subscribePlanChanges refuses signed-out access and uses the injected official SDK loader", async () => {
+  const statuses = [];
+  const changes = [];
+  const sockets = [];
+  const { client } = setup([json(auth()), new Response(null, { status: 204 })], {
+    loadRealtime: async () => ({
+      RealtimeClient: class {
+        constructor(url, options) { this.url = url; this.options = options; sockets.push(this); }
+        async setAuth(token) { this.token = token; }
+        channel() {
+          this.subscription = {
+            on: (_type, filter, callback) => { this.filter = filter; this.change = callback; },
+            subscribe: (callback) => { callback("SUBSCRIBED"); },
+          };
+          return this.subscription;
+        }
+        removeChannel() { this.removed = true; return Promise.resolve("ok"); }
+        disconnect() { this.closed = true; }
+      },
+    }),
+  });
+  assert.throws(() => client.subscribePlanChanges(), { status: 401 });
+  await client.signIn(TEST_PASSWORD);
+  const unsubscribe = client.subscribePlanChanges({
+    onChange(change) { changes.push(change); },
+    onStatus(status) { statuses.push(status); },
+  });
+  assert.equal(typeof unsubscribe, "function");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(sockets.length, 1);
+  assert.equal(sockets[0].url, `${config.url}/realtime/v1`);
+  assert.equal(sockets[0].token, "access-token");
+  assert.equal(await sockets[0].options.accessToken(), "access-token");
+  assert.equal(sockets[0].filter.filter, `user_id=eq.${user.id}`);
+  sockets[0].change({ new: { revision: 4, data: { private: "not forwarded" } } });
+  assert.deepEqual(changes, [{ revision: 4 }]);
+  assert.deepEqual(statuses, ["SUBSCRIBED"]);
+  await client.signOut();
+  assert.equal(sockets[0].removed, true);
+  assert.equal(sockets[0].closed, true);
+  assert.equal(await sockets[0].options.accessToken(), null);
+  unsubscribe();
 });
 
 test("invalid refresh tokens clear the session and do not send a data request", async () => {
