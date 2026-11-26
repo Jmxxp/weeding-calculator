@@ -5,6 +5,7 @@ export function subscribeFamilyPlanChanges({
   url,
   publishableKey,
   userId,
+  publicAccess = false,
   getAccessToken,
   onSessionEnd,
   onChange = () => {},
@@ -101,17 +102,17 @@ export function subscribeFamilyPlanChanges({
     if (stopped) return;
     if (typeof globalThis.WebSocket !== "function")
       throw Object.assign(new Error("Este navegador não permite conexão em tempo real."), { permanent: true });
-    if (typeof userId !== "string" || !userId || typeof getAccessToken !== "function")
-      throw Object.assign(new Error("Entre com a senha da família para conectar em tempo real."), { status: 401 });
-    const token = await accessToken();
+    if (typeof userId !== "string" || !userId || (!publicAccess && typeof getAccessToken !== "function"))
+      throw Object.assign(new Error("Carregue o planejamento antes de conectar em tempo real."), { status: 401 });
+    const token = publicAccess ? null : await accessToken();
     if (stopped) return;
     const { RealtimeClient } = await loadRealtime();
     if (stopped) return;
     socket = new RealtimeClient(`${url.replace(/\/$/, "")}/realtime/v1`, {
       params: { apikey: publishableKey },
-      accessToken,
+      ...(!publicAccess ? { accessToken } : {}),
     });
-    await socket.setAuth(token);
+    if (!publicAccess) await socket.setAuth(token);
     if (stopped) return;
     channel = socket.channel(`family-plans:${userId}`);
     channel.on("postgres_changes", {

@@ -8,26 +8,25 @@ Um quadro simples para montar e salvar orçamentos de casamento. HTML, CSS e Jav
 
 Requer Node.js 22 ou mais recente.
 
-## Supabase e acesso da família
+## Supabase e acesso público
 
-O aplicativo exige **usuário e senha** antes de abrir o planejamento. O usuário configurado é **jmxxp**. A senha é validada pelo **Supabase Auth**, que guarda seu hash no banco. A tela não pede e-mail; o endereço técnico da conta compartilhada fica apenas na configuração interna. Não há cadastro na interface.
+O planejamento abre diretamente, **sem login ou senha**. Qualquer pessoa com o link pode consultar e editar o mesmo planejamento compartilhado, incluindo fornecedores, convidados e orçamentos salvos.
 
 Para conectar, é necessário um projeto Supabase, sua **Project URL** e a chave **publishable** (ou a chave legada `anon`). A senha do Postgres e chaves `secret`/`service_role` nunca entram no navegador.
 
 1. Copie `.env.example` para `.env` e preencha `SUPABASE_URL` e `SUPABASE_PUBLISHABLE_KEY`, disponíveis em **Project Settings → API Keys**.
-2. Apenas na configuração administrativa do Supabase, em **Authentication → Users → Add user**, crie a conta técnica `familia@weeding-calculator.local`, com a senha de acesso escolhida e confirmação automática do e-mail. No app, a família entra com o usuário **jmxxp** e a senha, sem informar esse e-mail.
-3. Execute [supabase/setup.sql](supabase/setup.sql) no SQL Editor do projeto. Ele cria `family_plans` com RLS e autoriza a conta do passo anterior em **App Metadata**. Não use User Metadata para essa permissão. Para um e-mail técnico diferente, ajuste o e-mail no SQL e em `SUPABASE_FAMILY_EMAIL`.
-4. Como alternativa ao passo 2, preencha `SUPABASE_SECRET_KEY` e `FAMILY_ACCESS_PASSWORD` apenas no `.env` local e execute `npm run setup:supabase`. O script cria a conta confirmada e com a permissão necessária; não altera senhas de contas existentes.
-5. Para uma instalação anterior, execute também [supabase/realtime.sql](supabase/realtime.sql) no SQL Editor. O `setup.sql` já inclui essa configuração em novas instalações.
-6. Execute `npm run dev` ou gere a publicação com `npm run build:pages`.
+2. Se a instalação já possui a conta técnica `familia@weeding-calculator.local`, mantenha-a: ela identifica o planejamento existente. Para uma instalação nova, preencha `SUPABASE_SECRET_KEY` apenas no `.env` local e execute `npm run setup:supabase`. O script cria a conta confirmada com uma senha aleatória que não é exibida nem publicada; contas existentes são preservadas. Também é possível criar a conta manualmente em **Authentication → Users → Add user**, com confirmação do e-mail.
+3. Execute [supabase/setup.sql](supabase/setup.sql) no SQL Editor do projeto, inclusive se já havia login configurado. Ele mantém a tabela e os dados existentes, configura o identificador padrão e libera acesso público somente à linha da conta técnica. Para outro e-mail técnico, ajuste a busca pelo e-mail no SQL e `SUPABASE_FAMILY_EMAIL` no script de configuração.
+4. O `setup.sql` também ativa a publicação do **Supabase Realtime**. [supabase/realtime.sql](supabase/realtime.sql) permite reativar somente essa publicação, preservando as políticas existentes.
+5. Execute `npm run dev` ou gere a publicação com `npm run build:pages`.
 
-Se o projeto for exclusivo deste app, desative novos cadastros em **Authentication → Sign In / Providers**. Mesmo em um projeto compartilhado, contas externas não acessam os dados da família: as regras exigem tanto a identidade correta quanto a permissão em App Metadata.
+As permissões `anon` e `authenticated` permitem consultar, criar e atualizar somente o planejamento público. A **RLS permanece ativa** e bloqueia linhas de outras contas; a exclusão da linha inteira não é concedida ao navegador. O aplicativo usa a chave pública e não precisa criar sessões de visitantes no Supabase Auth.
 
-Os comandos de build incluem somente a URL, a chave pública, o nome de usuário e o e-mail técnico. `SUPABASE_FAMILY_USERNAME` permite alterar o usuário de acesso. O `.env` é ignorado pelo Git; a senha e a chave administrativa não são copiadas para `dist/`. Sem configuração, a entrada permanece fechada. Para testar as permissões no SQL Editor, execute [supabase/tests/family_plans_security.sql](supabase/tests/family_plans_security.sql), que verifica os acessos em uma transação com rollback.
+Os comandos de build incluem somente configurações públicas. O `.env` é ignorado pelo Git; a chave administrativa nunca é copiada para `dist/`. Sem conexão configurada, o aplicativo informa a indisponibilidade. Para testar as permissões no SQL Editor, execute [supabase/tests/family_plans_security.sql](supabase/tests/family_plans_security.sql), que verifica acesso público, isolamento das outras contas, criação, revisões e bloqueio de exclusão em uma transação com rollback.
 
-Na primeira entrada, se o banco ainda estiver vazio, o planejamento já salvo no navegador é importado. Um erro de conexão não substitui dados do banco por um planejamento vazio. O **Supabase Realtime** avisa os outros aparelhos assim que um planejamento é salvo, sem recarregar a página. A conexão usa a sessão autenticada e um filtro por conta; as regras RLS continuam protegendo os dados. Ao reconectar, o app busca alterações perdidas, e uma verificação a cada 60 segundos ajuda na recuperação de falhas de conexão. Alterações independentes são combinadas, e edições simultâneas no mesmo campo usam o último salvamento concluído. Alterações ainda não enviadas são guardadas por projeto e conta e recuperadas após recarregar, quando o armazenamento do navegador está disponível. A barra superior informa alterações pendentes ou falhas e permite tentar novamente. **Sair** salva alterações pendentes antes de encerrar a sessão e limpar os dados privados deste app no navegador.
+Na primeira abertura, se o banco ainda estiver vazio, o planejamento já salvo no navegador é importado. Um erro de conexão não substitui dados do banco por um planejamento vazio. O **Supabase Realtime** avisa os outros aparelhos assim que um planejamento é salvo, sem recarregar a página. A conexão usa a chave pública e um filtro pela linha compartilhada. Ao reconectar, o app busca alterações perdidas, e uma verificação a cada 60 segundos ajuda na recuperação de falhas de conexão. Alterações independentes são combinadas, e edições simultâneas no mesmo campo usam o último salvamento concluído. Alterações ainda não enviadas são guardadas por projeto e planejamento e recuperadas após recarregar, quando o armazenamento do navegador está disponível. A barra superior informa alterações pendentes ou falhas e permite tentar novamente.
 
-Referências: [autenticação por senha](https://supabase.com/docs/guides/auth/passwords), [proteção com RLS](https://supabase.com/docs/guides/database/postgres/row-level-security) e [Realtime Postgres Changes](https://supabase.com/docs/guides/realtime/postgres-changes).
+Referências: [chaves de API](https://supabase.com/docs/guides/api/api-keys), [proteção com RLS](https://supabase.com/docs/guides/database/postgres/row-level-security) e [Realtime Postgres Changes](https://supabase.com/docs/guides/realtime/postgres-changes).
 
 ```sh
 npm install

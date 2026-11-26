@@ -3,6 +3,25 @@ import { test } from "node:test";
 import { subscribeFamilyPlanChanges } from "../src/lib/family-realtime.js";
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+test("public connections use only the publishable key and keep the plan filter without a user JWT", async () => {
+  const { state, settings, options } = fixture({
+    publicAccess: true,
+    getAccessToken() { throw new Error("Public access must not request a user token"); },
+    onSessionEnd: undefined,
+  });
+  const unsubscribe = subscribeFamilyPlanChanges(settings, options);
+  await tick();
+  const socket = state.sockets[0];
+  assert.deepEqual(socket.options, { params: { apikey: settings.publishableKey } });
+  assert.deepEqual(socket.auth, []);
+  assert.equal(socket.filter.filter, `user_id=eq.${settings.userId}`);
+  assert.deepEqual(state.statuses, ["SUBSCRIBED"]);
+  socket.onChange({ new: { revision: 8 } });
+  assert.deepEqual(state.changes, [{ revision: 8 }]);
+  unsubscribe();
+  assert.equal(socket.disconnected, 1);
+});
 function deferred() {
   let resolve, reject;
   const promise = new Promise((done, fail) => { resolve = done; reject = fail; });

@@ -1,32 +1,18 @@
-import assert from "node:assert/strict";
+﻿import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createSupabaseClient, validateSupabaseConfig } from "../src/lib/supabase.js";
 
-const TEST_PASSWORD = "family-test-password";
 const config = { url: "https://family.supabase.co", publishableKey: "sb_publishable_test" };
-const user = { id: "4d0dcaaa-9501-47d7-bae3-6e1ad8b0d960", app_metadata: { family_planner: true } };
+const userId = "4d0dcaaa-9501-47d7-bae3-6e1ad8b0d960";
 const plan = { version: 1, suppliers: [], categories: [], scenarios: [] };
-const auth = (overrides = {}) => ({
-  access_token: "access-token", refresh_token: "refresh-token", expires_in: 3600, user, ...overrides,
-});
+const row = (revision = 1, data = plan) => ({ user_id: userId, data, revision });
 const json = (body, status = 200) => new Response(JSON.stringify(body), {
   status, headers: { "Content-Type": "application/json" },
 });
-function memoryStorage() {
-  const values = new Map();
-  return {
-    values,
-    getItem: (key) => values.get(key) ?? null,
-    setItem: (key, value) => values.set(key, value),
-    removeItem: (key) => values.delete(key),
-  };
-}
 function setup(responses, options = {}) {
   const requests = [];
-  const storage = options.storage ?? memoryStorage();
   const client = createSupabaseClient(config, {
     ...options,
-    storage,
     fetchImpl: async (url, init) => {
       requests.push({ url: new URL(url), ...init, parsedBody: init.body ? JSON.parse(init.body) : undefined });
       assert.ok(responses.length, `Unexpected request: ${url}`);
@@ -34,7 +20,7 @@ function setup(responses, options = {}) {
       return typeof next === "function" ? next(url, init) : next;
     },
   });
-  return { client, requests, storage };
+  return { client, requests };
 }
 
 test("configuration accepts HTTPS, localhost and legacy anon keys, rejecting privileged or unsafe configuration", () => {
@@ -63,340 +49,192 @@ test("configuration accepts HTTPS, localhost and legacy anon keys, rejecting pri
   ]) assert.throws(() => validateSupabaseConfig({ ...config, ...overrides }));
 });
 
-test("password login uses Supabase Auth and only stores project-scoped session tokens", async () => {
-  const { client, requests, storage } = setup([json(auth())]);
-  assert.deepEqual(await client.signIn(TEST_PASSWORD), user);
-  assert.equal(client.userId, user.id);
+test("the shared plan opens directly with only the public key and no stored session", async () => {
+  const { client, requests } = setup([json([row()])], {
+    storage: {
+      getItem() { assert.fail("Public access must not read a session"); },
+      setItem() { assert.fail("Public access must not store a session"); },
+      removeItem() { assert.fail("Public access must not clear browser storage"); },
+    },
+  });
+  assert.equal(client.userId, null);
+  assert.deepEqual(await client.readPlan(), { data: plan, revision: 1 });
+  assert.equal(client.userId, userId);
+  assert.equal(requests.length, 1);
   const request = requests[0];
-  assert.equal(request.url.pathname, "/auth/v1/token");
-  assert.equal(request.url.searchParams.get("grant_type"), "password");
-  assert.deepEqual(request.parsedBody, { email: "familia@weeding-calculator.local", password: TEST_PASSWORD });
+  assert.equal(request.url.pathname, "/rest/v1/family_plans");
+  assert.equal(request.url.searchParams.get("select"), "user_id,data,revision");
+  assert.equal(request.url.searchParams.get("user_id"), null);
   assert.equal(request.headers.apikey, config.publishableKey);
   assert.equal(request.headers.Authorization, undefined);
   assert.equal(request.credentials, "omit");
+  assert.equal(request.cache, "no-store");
   assert.equal(request.redirect, "error");
-  assert.equal(storage.values.size, 1);
-  const [key, saved] = [...storage.values][0];
-  assert.ok(key.includes(config.url));
-  assert.equal(saved.includes(TEST_PASSWORD), false);
-  assert.equal(JSON.parse(saved).refresh_token, "refresh-token");
+  assert.equal(client.signIn, undefined);
+  assert.equal(client.restoreSession, undefined);
 });
 
-test("invalid password reports a friendly error and never unlocks or stores a session", async () => {
-  const { client, storage } = setup([json({ msg: "Invalid login credentials" }, 400)]);
-  await assert.rejects(client.signIn("wrong"), (error) => error.status === 400 && error.message === "Usuário ou senha incorretos.");
+test("an empty shared plan is created with the database's existing family identity", async () => {
+  const { client, requests } = setup([json([]), json([row()], 201)]);
+  assert.equal(await client.readPlan(), null);
   assert.equal(client.userId, null);
-  assert.equal(storage.values.size, 0);
-  await assert.rejects(client.readPlan(), { status: 401 });
+  assert.deepEqual(await client.createPlan(plan), { data: plan, revision: 1 });
+  assert.equal(client.userId, userId);
+  const create = requests[1];
+  assert.equal(create.method, "POST");
+  assert.deepEqual(create.parsedBody, { data: plan, revision: 1 });
+  assert.equal(create.headers.Prefer, "return=representation");
+  assert.equal(create.headers.Authorization, undefined);
 });
 
-test("the username alias accepts trimmed case-insensitive input and retains the existing internal Auth account", async () => {
-  const { client, requests, storage } = setup([json(auth())]);
-  assert.deepEqual(await client.signIn(TEST_PASSWORD, " JMXXP "), user);
-  assert.deepEqual(requests[0].parsedBody, {
-    email: "familia@weeding-calculator.local", password: TEST_PASSWORD,
-  });
-  assert.equal(requests[0].parsedBody.username, undefined);
-  const saved = [...storage.values.values()][0];
-  assert.equal(saved.includes(TEST_PASSWORD), false);
-  assert.equal(saved.includes("JMXXP"), false);
+test("public updates target the loaded family identity and revision; conflicts return null", async () => {
+  const { client, requests } = setup([json([row(5)]), json([row(6)]), json([])]);
+  await client.readPlan();
+  assert.deepEqual(await client.updatePlan(plan, 5), { data: plan, revision: 6 });
+  assert.equal(await client.updatePlan(plan, 5), null);
+  const update = requests[1];
+  assert.equal(update.method, "PATCH");
+  assert.equal(update.url.searchParams.get("user_id"), `eq.${userId}`);
+  assert.equal(update.url.searchParams.get("revision"), "eq.5");
+  assert.deepEqual(update.parsedBody, { data: plan, revision: 6 });
+  assert.equal(update.headers.Prefer, "return=representation");
+  assert.equal(update.headers.Authorization, undefined);
+  assert.ok(requests.every((request) => request.url.pathname === "/rest/v1/family_plans"));
 });
 
-test("an incorrect username does not send credentials to Auth or unlock planning", async () => {
-  const { client, requests, storage } = setup([]);
-  for (const username of ["someone-else", "", null]) {
-    await assert.rejects(client.signIn(TEST_PASSWORD, username), (error) =>
-      error.status === 400 && error.message === "Usuário ou senha incorretos.",
-    );
-  }
+test("updates require a loaded identity and safe revision before any write is sent", async () => {
+  const { client, requests } = setup([json([row()])]);
+  await assert.rejects(client.updatePlan(plan, 1), { status: 400 });
   assert.equal(requests.length, 0);
-  assert.equal(client.userId, null);
-  assert.equal(storage.values.size, 0);
-  await assert.rejects(client.readPlan(), { status: 401 });
+  await client.readPlan();
+  for (const revision of [-1, 0, 1.5, "1", NaN, Number.MAX_SAFE_INTEGER])
+    await assert.rejects(client.updatePlan(plan, revision), { status: 400 });
+  assert.equal(requests.length, 1);
 });
 
-test("a configured username alias maps to its configured internal email without changing Auth identity", async () => {
-  let submitted;
-  const client = createSupabaseClient({ ...config, username: " Familia_01 ", email: "existing@example.com" }, {
-    storage: memoryStorage(),
-    fetchImpl: async (_url, init) => {
-      submitted = JSON.parse(init.body);
-      return json(auth());
-    },
-  });
-  await client.signIn(TEST_PASSWORD, "FAMILIA_01");
-  assert.deepEqual(submitted, { email: "existing@example.com", password: TEST_PASSWORD });
+test("failed network reads preserve the loaded identity and allow a later retry", async () => {
+  const { client, requests } = setup([
+    json([row()]),
+    () => { throw new Error("offline"); },
+    json([row(2)]),
+  ]);
+  await client.readPlan();
+  await assert.rejects(client.readPlan(), { status: 0 });
+  assert.equal(client.userId, userId);
+  assert.deepEqual(await client.readPlan(), { data: plan, revision: 2 });
+  assert.equal(requests.length, 3);
+  assert.ok(requests.every((request) => request.method === "GET"));
 });
 
-test("requests time out after 20 seconds with a recoverable error and no stored login", async (t) => {
+test("requests time out after 20 seconds with a recoverable error", async (t) => {
   const timeout = t.mock.method(AbortSignal, "timeout", (duration) => {
     assert.equal(duration, 20000);
     return AbortSignal.abort(new DOMException("timeout", "TimeoutError"));
   });
-  const { client, storage } = setup([(_url, { signal }) => signal.throwIfAborted()]);
-  await assert.rejects(client.signIn(TEST_PASSWORD), (error) =>
+  const { client } = setup([(_url, { signal }) => signal.throwIfAborted()]);
+  await assert.rejects(client.readPlan(), (error) =>
     error.status === 0 && /demorou para responder/.test(error.message),
   );
   assert.equal(timeout.mock.callCount(), 1);
   assert.equal(client.userId, null);
-  assert.equal(storage.values.size, 0);
 });
 
-test("user-editable metadata cannot authorize the family account", async () => {
-  const { client, storage } = setup([json(auth({
-    user: { id: user.id, user_metadata: { family_planner: true }, app_metadata: {} },
-  }))]);
-  await assert.rejects(client.signIn(TEST_PASSWORD), { status: 403 });
-  assert.equal(client.userId, null);
-  assert.equal(storage.values.size, 0);
-});
-
-test("sessions require verification with /user before a new client restores them", async () => {
-  const { client, storage } = setup([json(auth())]);
-  await client.signIn(TEST_PASSWORD);
-  const restored = setup([json(user)], { storage });
-  assert.equal(restored.client.userId, null);
-  assert.deepEqual(await restored.client.restoreSession(), user);
-  assert.equal(restored.requests[0].url.pathname, "/auth/v1/user");
-  assert.equal(restored.requests[0].headers.Authorization, "Bearer access-token");
-  assert.equal(restored.client.userId, user.id);
-});
-
-test("an account whose family authorization was revoked cannot restore a session", async () => {
-  const { client, storage } = setup([json(auth())]);
-  await client.signIn(TEST_PASSWORD);
-  const restored = setup([json({ id: user.id, app_metadata: {} })], { storage });
-  assert.equal(await restored.client.restoreSession(), null);
-  assert.equal(restored.client.userId, null);
-  assert.equal(storage.values.size, 0);
-});
-
-test("a failed session validation stays closed and retains tokens for a later connection attempt", async () => {
-  const { client, storage } = setup([json(auth())]);
-  await client.signIn(TEST_PASSWORD);
-  const restored = setup([() => { throw new Error("offline"); }, json(user)], { storage });
-  await assert.rejects(restored.client.restoreSession(), { status: 0 });
-  assert.equal(restored.client.userId, null);
-  assert.equal(storage.values.size, 1);
-  assert.deepEqual(await restored.client.restoreSession(), user);
-});
-
-test("plan CRUD is authenticated, user-scoped and revision-checked; conflicts return null", async () => {
-  const { client, requests } = setup([
-    json(auth()), json([]), json([{ data: plan, revision: 1 }], 201),
-    json([{ data: plan, revision: 2 }]), json([]),
-  ]);
-  await client.signIn(TEST_PASSWORD);
-  assert.equal(await client.readPlan(), null);
-  assert.deepEqual(await client.createPlan(plan), { data: plan, revision: 1 });
-  assert.deepEqual(await client.updatePlan(plan, 1), { data: plan, revision: 2 });
-  assert.equal(await client.updatePlan(plan, 1), null);
-  const [read, create, update] = requests.slice(1);
-  assert.equal(read.url.pathname, "/rest/v1/family_plans");
-  assert.equal(read.url.searchParams.get("user_id"), `eq.${user.id}`);
-  assert.equal(read.url.searchParams.get("select"), "data,revision");
-  assert.equal(read.headers.Authorization, "Bearer access-token");
-  assert.equal(create.method, "POST");
-  assert.deepEqual(create.parsedBody, { user_id: user.id, data: plan, revision: 1 });
-  assert.equal(create.headers.Prefer, "return=representation");
-  assert.equal(update.method, "PATCH");
-  assert.equal(update.url.searchParams.get("revision"), "eq.1");
-  assert.equal(update.url.searchParams.get("user_id"), `eq.${user.id}`);
-  assert.deepEqual(update.parsedBody, { data: plan, revision: 2 });
-  await assert.rejects(client.updatePlan(plan, -1), { status: 400 });
-});
-
-test("concurrent API calls share one refresh and persist the rotated refresh token", async () => {
-  let completeRefresh;
-  const refreshResponse = new Promise((resolve) => { completeRefresh = resolve; });
-  const { client, requests, storage } = setup([
-    json(auth({ expires_in: 1 })), () => refreshResponse,
-    json([{ data: plan, revision: 1 }]), json([{ data: plan, revision: 1 }]),
-  ]);
-  await client.signIn(TEST_PASSWORD);
-  const first = client.readPlan();
-  const second = client.readPlan();
-  assert.equal(requests.filter((request) => request.url.searchParams.get("grant_type") === "refresh_token").length, 1);
-  assert.deepEqual(requests[1].parsedBody, { refresh_token: "refresh-token" });
-  completeRefresh(json(auth({ access_token: "new-access", refresh_token: "new-refresh" })));
-  const rows = await Promise.all([first, second]);
-  assert.deepEqual(rows, [{ data: plan, revision: 1 }, { data: plan, revision: 1 }]);
-  assert.equal(requests.length, 4);
-  for (const request of requests.slice(2)) assert.equal(request.headers.Authorization, "Bearer new-access");
-  assert.equal(JSON.parse([...storage.values.values()][0]).refresh_token, "new-refresh");
-});
-
-test("expired stored tokens are refreshed before server-side user verification", async () => {
-  const { client, storage } = setup([json(auth({ expires_in: 1 }))]);
-  await client.signIn(TEST_PASSWORD);
-  const restored = setup([json(auth({ access_token: "refreshed" })), json(user)], { storage });
-  assert.deepEqual(await restored.client.restoreSession(), user);
-  assert.equal(restored.requests[0].url.searchParams.get("grant_type"), "refresh_token");
-  assert.equal(restored.requests[1].url.pathname, "/auth/v1/user");
-  assert.equal(restored.requests[1].headers.Authorization, "Bearer refreshed");
-});
-
-test("a revoked access token refreshes once before retrying the data request", async () => {
-  const { client, requests } = setup([
-    json(auth()), json({}, 401), json(auth({ access_token: "renewed" })),
-    json([{ data: plan, revision: 3 }]),
-  ]);
-  await client.signIn(TEST_PASSWORD);
-  assert.deepEqual(await client.readPlan(), { data: plan, revision: 3 });
-  assert.equal(requests.length, 4);
-  assert.equal(requests[3].headers.Authorization, "Bearer renewed");
-});
-
-test("Realtime token access shares REST refresh and never exposes refresh tokens", async () => {
-  const { client, requests } = setup([
-    json(auth({ expires_in: 1 })),
-    json(auth({ access_token: "rotated-access", refresh_token: "rotated-refresh" })),
-  ]);
-  await assert.rejects(client.getAccessToken(), { status: 401 });
-  await client.signIn(TEST_PASSWORD);
-  assert.equal(await client.getAccessToken(), "rotated-access");
-  assert.equal(await client.getAccessToken(), "rotated-access");
-  assert.equal(requests.length, 2);
-  assert.equal(requests[1].url.searchParams.get("grant_type"), "refresh_token");
-});
-
-test("session-end observers run on logout and revoked refresh, with removable subscriptions", async () => {
+test("HTTP errors retain status and identify missing public access without asking for a login", async () => {
   const { client } = setup([
-    json(auth({ expires_in: 1 })), json({}, 400),
-    json(auth()), new Response(null, { status: 204 }),
+    json({}, 401), json({}, 403), json({}, 404), json({}, 409), json({}, 429), json({}, 500),
   ]);
-  await client.signIn(TEST_PASSWORD);
-  let ended = 0;
-  const detach = client.onSessionEnd(() => { ended++; });
-  const detachBroken = client.onSessionEnd(() => { throw new Error("observer"); });
-  await assert.rejects(client.getAccessToken(), { status: 400 });
-  assert.equal(ended, 1);
-  detach();
-  detachBroken();
-  await client.signIn(TEST_PASSWORD);
-  const detachLogout = client.onSessionEnd(() => { ended++; });
-  await client.signOut();
-  assert.equal(ended, 2);
-  detachLogout();
+  for (const status of [401, 403])
+    await assert.rejects(client.readPlan(), (error) => error.status === status && /acesso público/.test(error.message));
+  await assert.rejects(client.readPlan(), { status: 404 });
+  await assert.rejects(client.createPlan(plan), { status: 409 });
+  await assert.rejects(client.readPlan(), { status: 429 });
+  await assert.rejects(client.readPlan(), { status: 500 });
 });
 
-test("subscribePlanChanges refuses signed-out access and uses the injected official SDK loader", async () => {
+test("malformed plans never set an identity or count as saved", async () => {
+  const malformed = [
+    {},
+    [row(), row()],
+    [{ ...row(), user_id: "id&revision=eq.1" }],
+    [{ ...row(), user_id: undefined }],
+    [{ ...row(), data: [] }],
+    [{ ...row(), revision: "1" }],
+    [{ ...row(), revision: 0 }],
+    [{ ...row(), revision: Number.MAX_SAFE_INTEGER + 1 }],
+  ];
+  for (const value of malformed) {
+    const { client } = setup([json(value)]);
+    await assert.rejects(client.readPlan(), { status: 502 });
+    assert.equal(client.userId, null);
+  }
+  const { client } = setup([json([])]);
+  await assert.rejects(client.createPlan(plan), { status: 502 });
+});
+
+test("non-JSON, invalid JSON and empty HTTP success responses are rejected", async () => {
+  const { client } = setup([
+    new Response("<html>unavailable</html>", { headers: { "Content-Type": "text/html" } }),
+    new Response("not json", { headers: { "Content-Type": "application/json" } }),
+    new Response(null, { status: 204 }),
+  ]);
+  for (let attempt = 0; attempt < 3; attempt++)
+    await assert.rejects(client.readPlan(), { status: 502 });
+});
+
+test("a write response cannot replace the loaded family identity", async () => {
+  const { client } = setup([
+    json([row()]),
+    json([{ ...row(2), user_id: "5d0dcaaa-9501-47d7-bae3-6e1ad8b0d960" }]),
+  ]);
+  await client.readPlan();
+  await assert.rejects(client.updatePlan(plan, 1), { status: 502 });
+  assert.equal(client.userId, userId);
+});
+
+test("Realtime uses public access and the loaded shared row without a custom token", async () => {
   const statuses = [];
   const changes = [];
   const sockets = [];
-  const { client } = setup([json(auth()), new Response(null, { status: 204 })], {
+  const { client } = setup([json([row()])], {
     loadRealtime: async () => ({
       RealtimeClient: class {
         constructor(url, options) { this.url = url; this.options = options; sockets.push(this); }
-        async setAuth(token) { this.token = token; }
+        setAuth() { assert.fail("Public Realtime must not set a user JWT"); }
         channel() {
-          this.subscription = {
+          const channel = {
             on: (type, filter, callback) => {
               if (type === "postgres_changes") { this.filter = filter; this.change = callback; }
               if (type === "system") this.system = callback;
+              return channel;
             },
             subscribe: (callback) => {
               callback("SUBSCRIBED");
-              this.system({ extension: "postgres_changes", status: "ok", message: "Subscribed to PostgreSQL" });
+              this.system({ extension: "postgres_changes", status: "ok" });
             },
           };
-          return this.subscription;
+          return channel;
         }
         removeChannel() { this.removed = true; return Promise.resolve("ok"); }
         disconnect() { this.closed = true; }
       },
     }),
   });
-  assert.throws(() => client.subscribePlanChanges(), { status: 401 });
-  await client.signIn(TEST_PASSWORD);
+  assert.throws(() => client.subscribePlanChanges(), { status: 400 });
+  await client.readPlan();
   const unsubscribe = client.subscribePlanChanges({
     onChange(change) { changes.push(change); },
     onStatus(status) { statuses.push(status); },
   });
-  assert.equal(typeof unsubscribe, "function");
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(sockets.length, 1);
   assert.equal(sockets[0].url, `${config.url}/realtime/v1`);
-  assert.equal(sockets[0].token, "access-token");
-  assert.equal(await sockets[0].options.accessToken(), "access-token");
-  assert.equal(sockets[0].filter.filter, `user_id=eq.${user.id}`);
+  assert.deepEqual(sockets[0].options.params, { apikey: config.publishableKey });
+  assert.equal(sockets[0].options.accessToken, undefined);
+  assert.equal(sockets[0].filter.filter, `user_id=eq.${userId}`);
   sockets[0].change({ new: { revision: 4, data: { private: "not forwarded" } } });
   assert.deepEqual(changes, [{ revision: 4 }]);
   assert.deepEqual(statuses, ["SUBSCRIBED"]);
-  await client.signOut();
+  unsubscribe();
   assert.equal(sockets[0].removed, true);
   assert.equal(sockets[0].closed, true);
-  assert.equal(await sockets[0].options.accessToken(), null);
-  unsubscribe();
-});
-
-test("invalid refresh tokens clear the session and do not send a data request", async () => {
-  const { client, requests, storage } = setup([json(auth({ expires_in: 1 })), json({}, 400)]);
-  await client.signIn(TEST_PASSWORD);
-  await assert.rejects(client.readPlan(), { status: 400 });
-  assert.equal(requests.length, 2);
-  assert.equal(client.userId, null);
-  assert.equal(storage.values.size, 0);
-});
-
-test("logout uses local scope so other relatives remain signed in and removes local tokens", async () => {
-  const { client, requests, storage } = setup([json(auth()), new Response(null, { status: 204 })]);
-  await client.signIn(TEST_PASSWORD);
-  await client.signOut();
-  assert.equal(requests[1].url.pathname, "/auth/v1/logout");
-  assert.equal(requests[1].url.searchParams.get("scope"), "local");
-  assert.equal(client.userId, null);
-  assert.equal(storage.values.size, 0);
-  await assert.rejects(client.readPlan(), { status: 401 });
-});
-
-test("a late token refresh cannot restore a session after logout", async () => {
-  let completeRefresh;
-  const deferred = new Promise((resolve) => { completeRefresh = resolve; });
-  const { client, storage } = setup([
-    json(auth({ expires_in: 1 })), () => deferred, new Response(null, { status: 204 }),
-  ]);
-  await client.signIn(TEST_PASSWORD);
-  const pending = client.readPlan();
-  await client.signOut();
-  completeRefresh(json(auth({ access_token: "late-access" })));
-  await assert.rejects(pending, { status: 401 });
-  assert.equal(client.userId, null);
-  assert.equal(storage.values.size, 0);
-});
-
-test("blocked storage does not prevent in-memory sign-in and authenticated saves", async () => {
-  const storage = {
-    getItem() { throw new Error("blocked"); },
-    setItem() { throw new Error("blocked"); },
-    removeItem() { throw new Error("blocked"); },
-  };
-  const { client } = setup([json(auth()), json([{ data: plan, revision: 1 }], 201)], { storage });
-  assert.equal(await client.restoreSession(), null);
-  await client.signIn(TEST_PASSWORD);
-  assert.deepEqual(await client.createPlan(plan), { data: plan, revision: 1 });
-});
-
-test("a different project never restores the first project's session", async () => {
-  const { client, storage } = setup([json(auth())]);
-  await client.signIn(TEST_PASSWORD);
-  const other = createSupabaseClient({ ...config, url: "https://other.supabase.co" }, {
-    storage, fetchImpl: () => assert.fail("There is no session for this project"),
-  });
-  assert.equal(await other.restoreSession(), null);
-  assert.equal(other.userId, null);
-});
-
-test("HTTP errors retain status and non-JSON or malformed success responses never count as saved", async () => {
-  const { client } = setup([
-    json(auth()), json({}, 403), json({}, 404), json({}, 409),
-    new Response("<html>unavailable</html>", { headers: { "Content-Type": "text/html" } }),
-    json([]),
-  ]);
-  await client.signIn(TEST_PASSWORD);
-  await assert.rejects(client.readPlan(), { status: 403 });
-  await assert.rejects(client.readPlan(), { status: 404 });
-  await assert.rejects(client.createPlan(plan), { status: 409 });
-  await assert.rejects(client.readPlan(), { status: 502 });
-  await assert.rejects(client.createPlan(plan), { status: 502 });
 });
