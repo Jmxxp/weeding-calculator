@@ -192,7 +192,7 @@ export function mountApp(root, options = {}) {
         <span class="rail-divider"></span><button type="button" class="rail-button rail-clear" data-action="request-clear-budget" title="Limpar orçamento atual" aria-label="Limpar orçamento atual">${navigationIcon("clear")}</button>
       </nav></aside>
       <main class="workspace-content ${options.onSave ? "shared-workspace" : ""}">
-        ${options.onSave ? `<div class="family-toolbar"><span data-sync-message role="status"></span><button type="button" class="family-text-button" data-action="retry-sync" hidden>Tentar novamente</button><button type="button" class="family-text-button" data-action="sign-out">Sair</button></div>` : ""}
+        ${options.onSave ? `<div class="family-toolbar"><span data-sync-message role="status"></span><button type="button" class="family-text-button" data-action="retry-sync" hidden>Tentar novamente</button>${options.onSignOut ? '<button type="button" class="family-text-button" data-action="sign-out">Sair</button>' : ""}</div>` : ""}
         ${state.storageError ? '<div class="storage-warning" role="alert">Não foi possível salvar neste navegador. Confira se há espaço disponível antes de fechar.</div>' : ""}
         ${state.view === "overview" ? renderBoard(d, state) : `<section class="secondary-view">${state.view === "scenarios" ? `<div class="secondary-heading"><h1>Orçamentos salvos</h1><button type="button" class="button button-primary" data-action="new-budget">${icon("Plus", 18)} Novo orçamento</button></div>${renderSavedBudgets(d)}` : state.view === "guests" ? '<div id="guests-root"></div>' : '<div id="assistant-root"></div>'}</section>`}
       </main>
