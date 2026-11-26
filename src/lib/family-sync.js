@@ -62,6 +62,7 @@ export function createFamilySync({
   client,
   initialData,
   initialRevision,
+  initialChanges = null,
   onData = () => {},
   onStatus = () => {},
   delay = 400,
@@ -71,6 +72,10 @@ export function createFamilySync({
 }) {
   let baseline = validData(initialData);
   let desired = copy(baseline);
+  const localChanges = initialChanges === null ? null : {
+    baseline: validData(initialChanges?.baseline),
+    desired: validData(initialChanges?.desired),
+  };
   let revision = initialRevision;
   let destroyed = false;
   let debounceTimer;
@@ -120,8 +125,10 @@ export function createFamilySync({
     } catch {
       // A broken or inaccessible journal must not replace valid server data.
     }
-    persistJournal();
   }
+  if (localChanges)
+    desired = validData(mergeChanges(localChanges.baseline, localChanges.desired, desired));
+  if (journalEnabled) persistJournal();
 
   function accept(remote, snapshot) {
     const previous = desired;
@@ -300,6 +307,13 @@ export function createFamilySync({
     },
     get data() {
       return copy(desired);
+    },
+    get recoveryState() {
+      return {
+        baseline: copy(baseline),
+        desired: copy(desired),
+        persisted: Boolean(journalEnabled && !journalFailed),
+      };
     },
   };
 }
