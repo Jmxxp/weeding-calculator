@@ -272,6 +272,139 @@ function journalStorage() {
   };
 }
 
+test("recovery state exposes cloned data and confirms the pending journal was persisted", () => {
+  const db = database();
+  const storage = journalStorage();
+  const device = mount(db, { storage, storageKey: "recovery-state" });
+  assert.equal(device.sync.recoveryState.persisted, true);
+  device.edit((data) => { data.wedding.budget = 32000; });
+  const state = device.sync.recoveryState;
+  const saved = JSON.parse(storage.getItem("recovery-state"));
+  assert.equal(state.persisted, true);
+  assert.deepEqual(state.baseline, saved.baseline);
+  assert.deepEqual(state.desired, saved.desired);
+  state.baseline.wedding.couple = "Modified snapshot";
+  state.desired.wedding.budget = 1;
+  state.desired.categories.length = 0;
+  const unchanged = device.sync.recoveryState;
+  assert.equal(unchanged.baseline.wedding.couple, db.row.data.wedding.couple);
+  assert.equal(unchanged.desired.wedding.budget, 32000);
+  assert.ok(unchanged.desired.categories.length > 0);
+});
+
+test("recovery state never reports persistence without storage or after a quota failure", () => {
+  const db = database();
+  const memoryOnly = mount(db);
+  memoryOnly.edit((data) => { data.wedding.budget = 23000; });
+  assert.equal(memoryOnly.sync.recoveryState.persisted, false);
+  assert.equal(memoryOnly.sync.recoveryState.desired.wedding.budget, 23000);
+  const storage = journalStorage();
+  const save = storage.setItem.bind(storage);
+  const device = mount(db, { storage, storageKey: "quota" });
+  storage.setItem = () => { throw new Error("quota exceeded"); };
+  device.edit((data) => { data.wedding.budget = 31000; });
+  assert.equal(device.sync.recoveryState.persisted, false);
+  assert.equal(device.sync.recoveryState.baseline.wedding.budget, 0);
+  assert.equal(device.sync.recoveryState.desired.wedding.budget, 31000);
+  storage.setItem = save;
+  device.edit((data) => { data.wedding.budget = 33000; });
+  assert.equal(device.sync.recoveryState.persisted, true);
+  assert.equal(JSON.parse(storage.getItem("quota")).desired.wedding.budget, 33000);
+});
+
+test("initial offline edits merge with independent remote changes and use the latest revision", async () => {
+  const baseline = createEmptyData();
+  const desired = clone(baseline);
+  desired.wedding.budget = 28000;
+  desired.guestsList.push(guest("offline", "Neste aparelho"));
+  const db = database(baseline);
+  const newer = db.row.data;
+  newer.wedding.guests = 120;
+  newer.guestsList.push(guest("remote", "Outro aparelho"));
+  db.replace(newer);
+  const storage = journalStorage();
+  const device = mount(db, {
+    initialChanges: { baseline, desired },
+    storage,
+    storageKey: "initial-offline",
+  });
+  assert.equal(device.sync.pending, true);
+  assert.equal(device.sync.revision, 2);
+  assert.equal(device.displayed.wedding.budget, 28000);
+  assert.equal(device.displayed.wedding.guests, 120);
+  assert.deepEqual(device.displayed.guestsList.map((person) => person.id), ["remote", "offline"]);
+  const journal = JSON.parse(storage.getItem("initial-offline"));
+  assert.deepEqual(journal.baseline, newer);
+  assert.deepEqual(journal.desired, device.displayed);
+  assert.equal(await device.sync.flush(), true);
+  assert.deepEqual(db.row.data, device.displayed);
+  assert.equal(db.writes.length, 1);
+  assert.equal(db.writes[0].revision, 2);
+  assert.equal(storage.getItem("initial-offline"), null);
+});
+
+test("initial offline edits combine with an older pending journal instead of replacing it", async () => {
+  const baseline = createEmptyData();
+  const previous = clone(baseline);
+  previous.wedding.budget = 17000;
+  const offline = clone(previous);
+  offline.wedding.guests = 75;
+  const db = database(baseline);
+  const newer = db.row.data;
+  newer.wedding.couple = "Alteração da família";
+  db.replace(newer);
+  const storage = journalStorage();
+  storage.setItem("recovery-offline", JSON.stringify({
+    version: 1,
+    baseline,
+    desired: previous,
+    revision: 1,
+  }));
+  const device = mount(db, {
+    initialChanges: { baseline: previous, desired: offline },
+    storage,
+    storageKey: "recovery-offline",
+  });
+  assert.equal(device.displayed.wedding.budget, 17000);
+  assert.equal(device.displayed.wedding.guests, 75);
+  assert.equal(device.displayed.wedding.couple, "Alteração da família");
+  assert.equal(await device.sync.flush(), true);
+  assert.equal(db.row.data.wedding.budget, 17000);
+  assert.equal(db.row.data.wedding.guests, 75);
+  assert.equal(db.row.data.wedding.couple, "Alteração da família");
+});
+
+test("an unchanged offline snapshot accepts remote data without uploading an empty replacement", async () => {
+  const offline = createEmptyData();
+  const remote = createEmptyData();
+  remote.wedding.couple = "Planejamento compartilhado";
+  remote.guestsList.push(guest("remote", "Pessoa cadastrada"));
+  const db = database(remote);
+  const device = mount(db, { initialChanges: { baseline: offline, desired: clone(offline) } });
+  assert.deepEqual(device.displayed, remote);
+  assert.equal(device.sync.pending, false);
+  assert.equal(await device.sync.flush(), true);
+  assert.equal(db.writes.length, 0);
+  assert.deepEqual(db.row.data, remote);
+});
+
+test("invalid initial changes reject before changing the pending journal or writing remotely", () => {
+  const db = database();
+  const storage = journalStorage();
+  const journal = JSON.stringify({
+    version: 1,
+    baseline: db.row.data,
+    desired: db.row.data,
+    revision: 1,
+  });
+  storage.setItem("preserve", journal);
+  for (const initialChanges of [{}, { baseline: db.row.data, desired: {} }, { baseline: {}, desired: db.row.data }]) {
+    assert.throws(() => mount(db, { initialChanges, storage, storageKey: "preserve" }), /planejamento compartilhado está inválido/);
+    assert.equal(storage.getItem("preserve"), journal);
+    assert.equal(db.writes.length, 0);
+  }
+});
+
 test("pending edits survive reload and merge with newer family data", async () => {
   const db = database();
   const storage = journalStorage();

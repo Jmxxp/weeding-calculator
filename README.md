@@ -12,6 +12,8 @@ Requer Node.js 22 ou mais recente.
 
 O planejamento abre diretamente, **sem login ou senha**. Qualquer pessoa com o link pode consultar e editar o mesmo planejamento compartilhado, incluindo fornecedores, convidados e orçamentos salvos.
 
+O aplicativo também abre quando o Supabase está indisponível. Nesse caso, usa o planejamento salvo no navegador e informa que os dados estão **somente neste aparelho**, sem apresentá-los como compartilhados. Novas edições são guardadas localmente e combinadas com os dados da nuvem quando a conexão é restabelecida pelo botão **Tentar novamente** ou pelo retorno da internet. O planejamento da nuvem só é criado após uma leitura bem-sucedida confirmar que ainda não existe; uma falha de conexão nunca autoriza substituí-lo.
+
 Para conectar, é necessário um projeto Supabase, sua **Project URL** e a chave **publishable** (ou a chave legada `anon`). A senha do Postgres e chaves `secret`/`service_role` nunca entram no navegador.
 
 1. Copie `.env.example` para `.env` e preencha `SUPABASE_URL` e `SUPABASE_PUBLISHABLE_KEY`, disponíveis em **Project Settings → API Keys**.
@@ -22,7 +24,7 @@ Para conectar, é necessário um projeto Supabase, sua **Project URL** e a chave
 
 As permissões `anon` e `authenticated` permitem consultar, criar e atualizar somente o planejamento público. A **RLS permanece ativa** e bloqueia linhas de outras contas; a exclusão da linha inteira não é concedida ao navegador. O aplicativo usa a chave pública e não precisa criar sessões de visitantes no Supabase Auth.
 
-Os comandos de build incluem somente configurações públicas. O `.env` é ignorado pelo Git; a chave administrativa nunca é copiada para `dist/`. Sem conexão configurada, o aplicativo informa a indisponibilidade. Para testar as permissões no SQL Editor, execute [supabase/tests/family_plans_security.sql](supabase/tests/family_plans_security.sql), que verifica acesso público, isolamento das outras contas, criação, revisões e bloqueio de exclusão em uma transação com rollback.
+Os comandos de build incluem somente configurações públicas. O `.env` é ignorado pelo Git; a chave administrativa nunca é copiada para `dist/`. Sem conexão configurada, o aplicativo funciona localmente e informa que o compartilhamento está indisponível. Para testar as permissões no SQL Editor, execute [supabase/tests/family_plans_security.sql](supabase/tests/family_plans_security.sql), que verifica acesso público, isolamento das outras contas, criação, revisões e bloqueio de exclusão em uma transação com rollback.
 
 Na primeira abertura, se o banco ainda estiver vazio, o planejamento já salvo no navegador é importado. Um erro de conexão não substitui dados do banco por um planejamento vazio. O **Supabase Realtime** avisa os outros aparelhos assim que um planejamento é salvo, sem recarregar a página. A conexão usa a chave pública e um filtro pela linha compartilhada. Ao reconectar, o app busca alterações perdidas, e uma verificação a cada 60 segundos ajuda na recuperação de falhas de conexão. Alterações independentes são combinadas, e edições simultâneas no mesmo campo usam o último salvamento concluído. Alterações ainda não enviadas são guardadas por projeto e planejamento e recuperadas após recarregar, quando o armazenamento do navegador está disponível. A barra superior informa alterações pendentes ou falhas e permite tentar novamente.
 
